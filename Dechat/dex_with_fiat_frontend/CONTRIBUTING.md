@@ -15,6 +15,7 @@ Run the applicable checks locally before pushing:
 - `pnpm lint` — static analysis and style.
 - `pnpm typecheck` — TypeScript contract checks.
 - `pnpm test` — unit and integration tests.
+- `pnpm contract:abi:check` — compares committed client bindings with current and supported Soroban specs.
 - `pnpm test:e2e` — Playwright end-to-end and visual regression tests.
 
 If a check is not applicable to your change, note why in the PR description.

@@ -1,0 +1,242 @@
+{
+  "format": "contract-abi-spec-v1",
+  "release": "current",
+  "status": "current",
+  "contractName": "FiatBridgeContract",
+  "methods": {
+    "init": {
+      "inputs": ["Address", "Address", "i128", "Address", "i128", "u64"],
+      "output": "Result<(), Error>"
+    },
+    "deposit": {
+      "inputs": ["Address", "i128"],
+      "output": "Result<(), Error>"
+    },
+    "withdraw": {
+      "inputs": ["Address", "i128"],
+      "output": "Result<(), Error>"
+    },
+    "request_withdrawal": {
+      "inputs": ["Address", "Address", "i128", "Address"],
+      "output": "Result<u64, Error>"
+    },
+    "execute_withdrawal": {
+      "inputs": ["u64"],
+      "output": "Result<(), Error>"
+    },
+    "cancel_withdrawal": {
+      "inputs": ["u64"],
+      "output": "Result<(), Error>"
+    },
+    "reclaim_expired_withdrawal": {
+      "inputs": ["u64"],
+      "output": "Result<(), Error>"
+    },
+    "get_token": {
+      "inputs": [],
+      "output": "Result<Address, Error>"
+    },
+    "get_total_withdrawn": {
+      "inputs": [],
+      "output": "Result<i128, Error>"
+    },
+    "get_total_liabilities": {
+      "inputs": [],
+      "output": "Result<i128, Error>"
+    },
+    "get_admin": {
+      "inputs": [],
+      "output": "Result<Address, Error>"
+    },
+    "get_limit": {
+      "inputs": [],
+      "output": "Result<i128, Error>"
+    },
+    "get_total_deposited": {
+      "inputs": [],
+      "output": "i128"
+    },
+    "get_wq_depth": {
+      "inputs": [],
+      "output": "u64"
+    },
+    "get_wq_oldest_queued_ledger": {
+      "inputs": [],
+      "output": "Option<u32>"
+    },
+    "get_wq_oldest_age_ledgers": {
+      "inputs": [],
+      "output": "Option<u32>"
+    },
+    "get_withdrawal_request": {
+      "inputs": ["u64"],
+      "output": "Option<WithdrawRequest>"
+    },
+    "get_receipt_by_index": {
+      "inputs": ["u64"],
+      "output": "Option<Receipt>"
+    },
+    "get_accrued_fees": {
+      "inputs": ["Address"],
+      "output": "i128"
+    },
+    "get_event_version": {
+      "inputs": [],
+      "output": "u32"
+    },
+    "is_circuit_breaker_tripped": {
+      "inputs": [],
+      "output": "bool"
+    },
+    "get_receipt_audit_views": {
+      "inputs": ["u64", "u32"],
+      "output": "Result<ReceiptAuditPage, Error>"
+    },
+    "is_denied": {
+      "inputs": ["Address"],
+      "output": "Result<bool, Error>"
+    }
+  },
+  "types": {
+    "Receipt": {
+      "fields": [
+        {
+          "name": "depositor",
+          "type": "Address"
+        },
+        {
+          "name": "amount",
+          "type": "i128"
+        },
+        {
+          "name": "ledger",
+          "type": "u32"
+        }
+      ]
+    },
+    "WithdrawRequest": {
+      "fields": [
+        {
+          "name": "id",
+          "type": "u64"
+        },
+        {
+          "name": "user",
+          "type": "Address"
+        },
+        {
+          "name": "token",
+          "type": "Address"
+        },
+        {
+          "name": "amount",
+          "type": "i128"
+        },
+        {
+          "name": "destination",
+          "type": "Address"
+        },
+        {
+          "name": "queued_at_ledger",
+          "type": "u32"
+        }
+      ]
+    },
+    "ReceiptAuditPage": {
+      "fields": [
+        {
+          "name": "records",
+          "type": "Vec<ReceiptAuditView>"
+        },
+        {
+          "name": "next_cursor",
+          "type": "Option<u64>"
+        }
+      ]
+    },
+    "ReceiptAuditView": {
+      "fields": [
+        {
+          "name": "version",
+          "type": "u32"
+        },
+        {
+          "name": "receipt_id",
+          "type": "BytesN<32>"
+        },
+        {
+          "name": "token",
+          "type": "Address"
+        },
+        {
+          "name": "amount",
+          "type": "i128"
+        },
+        {
+          "name": "status",
+          "type": "ReceiptAuditStatus"
+        }
+      ]
+    }
+  },
+  "errors": {
+    "10": "Overflow",
+    "101": "NotInitialized",
+    "102": "AlreadyInitialized",
+    "103": "InternalError",
+    "104": "ContractPaused",
+    "201": "Unauthorized",
+    "202": "NotAllowed",
+    "203": "NoPendingAdmin",
+    "204": "InvalidRecipient",
+    "205": "NotOperator",
+    "206": "OperatorCapReached",
+    "207": "SameAdmin",
+    "301": "ZeroAmount",
+    "302": "ExceedsLimit",
+    "303": "ExceedsLimitMaxCap",
+    "304": "DailyLimitExceeded",
+    "305": "ExceedsFiatLimit",
+    "306": "ReferenceTooLong",
+    "307": "CooldownActive",
+    "308": "AntiSandwichDelayActive",
+    "309": "TokenNotWhitelisted",
+    "310": "AddressDenied",
+    "311": "RescueForbidden",
+    "312": "CircuitBreakerActive",
+    "313": "InvalidMemoHash",
+    "314": "FeeWithdrawalExceedsBalance",
+    "315": "CircuitBreakerTripped",
+    "319": "LimitCapCannotBeLowered",
+    "401": "InsufficientFunds",
+    "402": "NoFeesToWithdraw",
+    "501": "RequestNotFound",
+    "502": "WithdrawalLocked",
+    "503": "OperatorDailyLimitExceeded",
+    "601": "ActionNotQueued",
+    "602": "ActionNotReady",
+    "603": "InactivityThresholdNotReached",
+    "604": "NoEmergencyRecoveryAddress",
+    "605": "UpgradeNotReady",
+    "606": "UpgradeProposalMissing",
+    "607": "UpgradeDelayTooShort",
+    "701": "OracleNotSet",
+    "702": "OraclePriceInvalid",
+    "703": "SlippageExceeded",
+    "704": "SlippageTooHigh",
+    "801": "WithdrawalQuotaExceeded",
+    "802": "MigrationAlreadyComplete",
+    "803": "BatchOperationFailed",
+    "901": "InvalidNonce",
+    "902": "StaleNonce",
+    "1001": "BelowMinimum",
+    "1101": "InvalidThreshold",
+    "1102": "DuplicateSigner",
+    "1103": "SignerNotFound",
+    "1104": "ProposalNotFound",
+    "1105": "AlreadyApproved",
+    "1106": "ProposalAlreadyExecuted",
+    "1107": "ThresholdNotMet",
+    "1108": "MaxSignersReached"
+  }
+}

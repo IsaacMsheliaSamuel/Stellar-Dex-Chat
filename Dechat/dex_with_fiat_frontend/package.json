@@ -12,6 +12,8 @@
     "check": "prettier --check \"src\" \"tests/e2e\" \"*.{ts,mjs,json}\"",
     "test:unit": "vitest run",
     "test:adversarial": "vitest run tests/adversarial",
+    "contract:abi:check": "node --experimental-strip-types --no-warnings=MODULE_TYPELESS_PACKAGE_JSON scripts/contract-abi-compat.mjs check",
+    "contract:abi:capture": "node --experimental-strip-types --no-warnings=MODULE_TYPELESS_PACKAGE_JSON scripts/contract-abi-compat.mjs capture",
     "typecheck": "pnpm typecheck:src && pnpm typecheck:tests",
     "typecheck:src": "tsc --noEmit",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
