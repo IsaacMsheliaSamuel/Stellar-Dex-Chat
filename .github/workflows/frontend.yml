@@ -4,7 +4,8 @@ name: Frontend CI
 #
 #   lint ──────────────────────────────────────────────────────────┐
 #   build ─────────────────────────────────────────────────────────┤──► e2e
-#   unit-tests (matrix ×4, parallel) ──► coverage-merge ──────────┘
+#   unit-tests (matrix ×4, parallel) ──► coverage-merge ──────────┤
+#                                   └──► critical-coverage ───────┘
 #
 # build and unit-tests are independent: a test failure does not hide a build
 # failure and vice-versa.  e2e waits only for build + lint so it starts as
@@ -338,7 +339,67 @@ jobs:
           path: Dechat/dex_with_fiat_frontend/coverage-report.json
           retention-days: 7
 
-  # ── 5. End-to-end tests ───────────────────────────────────────────────────
+  # ── 5. Critical financial module coverage gate ───────────────────────────
+  critical-coverage:
+    name: Critical coverage
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: always() && needs.unit-tests.result != 'skipped'
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: Dechat/dex_with_fiat_frontend
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+          cache-dependency-path: Dechat/dex_with_fiat_frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch base branch for changed-line reporting
+        run: git fetch origin main:refs/remotes/origin/main --depth=1 --force
+
+      - name: Check critical coverage thresholds
+        run: pnpm coverage:critical:check
+
+      - name: Run critical mutation suite
+        run: pnpm coverage:critical:mutation
+
+      - name: Check uncovered changed lines
+        run: pnpm coverage:critical:changed-lines
+        env:
+          BASE_REF: origin/main
+
+      - name: Generate critical coverage report
+        if: always() && github.event_name == 'pull_request'
+        run: pnpm coverage:critical:report
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Upload critical coverage report
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: critical-coverage-report
+          path: Dechat/dex_with_fiat_frontend/critical-coverage-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ── 6. End-to-end tests ───────────────────────────────────────────────────
   e2e:
     name: E2E
     runs-on: ubuntu-latest
