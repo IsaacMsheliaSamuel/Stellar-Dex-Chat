@@ -12,6 +12,7 @@ interface ChatSearchPanelWrapperProps {
   sessions: ChatSession[];
   onSelectResult: (sessionId: string) => void;
   onClose: () => void;
+  connectedWalletAddress?: string;
 }
 
 export default function ChatSearchPanelWrapper(props: ChatSearchPanelWrapperProps) {

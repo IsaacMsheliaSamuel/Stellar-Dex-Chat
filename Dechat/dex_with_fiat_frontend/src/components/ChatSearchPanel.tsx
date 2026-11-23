@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, X, Calendar, Wallet, ChevronRight } from 'lucide-react';
+import { Search, X, Calendar, Wallet, ChevronRight, User, Trash2 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ChatSession } from '@/types';
 import {
@@ -10,12 +10,16 @@ import {
   searchChatHistory,
   splitByHighlights,
   debounce,
+  redactPayoutSensitiveFields,
+  containsPayoutSensitiveData,
 } from '@/lib/chatSearch';
 
 interface ChatSearchPanelProps {
   sessions: ChatSession[];
   onSelectResult: (sessionId: string, messageId: string) => void;
   onClose: () => void;
+  /** Connected wallet address used to scope search results to the current account. */
+  connectedWalletAddress?: string;
 }
 
 /** Renders a single message snippet with keyword highlights. */
@@ -71,18 +75,21 @@ const EMPTY_FILTERS: SearchFilters = {
   walletAddress: '',
   dateFrom: '',
   dateTo: '',
+  accountScopedWallet: '',
 };
 
 export default function ChatSearchPanel({
   sessions,
   onSelectResult,
   onClose,
+  connectedWalletAddress,
 }: ChatSearchPanelProps) {
   const { isDarkMode } = useTheme();
   const [filters, setFilters] = useState<SearchFilters>(EMPTY_FILTERS);
   const [results, setResults] = useState<MessageMatch[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // #1183: keep the active-result index in range whenever the result set
@@ -97,6 +104,7 @@ export default function ChatSearchPanel({
     setFilters(EMPTY_FILTERS);
     setResults([]);
     setShowAdvanced(false);
+    setShowDeleteDialog(false);
     onClose();
   };
 
@@ -142,7 +150,27 @@ export default function ChatSearchPanel({
   };
 
   const hasAnyFilter =
-    filters.keyword || filters.walletAddress || filters.dateFrom || filters.dateTo;
+    filters.keyword || filters.walletAddress || filters.dateFrom || filters.dateTo || filters.accountScopedWallet;
+
+  const redactedCount = results.filter((r) => r.redacted).length;
+
+  // Delete cached search results and any payout-sensitive localStorage records
+  const handleDeleteCachedRecords = () => {
+    // Clear any payout-sensitive cached data from localStorage
+    const keysToRemove: string[] = [];
+    if (typeof window !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('tx_draft_') || key.startsWith('stellar_pending_tx'))) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+    setResults([]);
+    setFilters(EMPTY_FILTERS);
+    setShowDeleteDialog(false);
+  };
 
   return (
     <div
@@ -212,6 +240,27 @@ export default function ChatSearchPanel({
                 className={`text-xs px-2 py-1.5 rounded border outline-none focus:ring-1 focus:ring-blue-500 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'}`}
                 aria-label="Filter by wallet address"
               />
+            </label>
+
+            {/* Account-scoped wallet (privacy boundary) */}
+            <label className="flex flex-col gap-1">
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                <User className="inline w-3 h-3 mr-1" />
+                Account-scoped wallet
+              </span>
+              <input
+                type="text"
+                placeholder="e.g. GABCD…"
+                value={filters.accountScopedWallet}
+                onChange={(e) =>
+                  setFilters((f) => ({ ...f, accountScopedWallet: e.target.value }))
+                }
+                className={`text-xs px-2 py-1.5 rounded border outline-none focus:ring-1 focus:ring-blue-500 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'}`}
+                aria-label="Scope search to account wallet"
+              />
+              <p className={`text-[10px] ${isDarkMode ? 'text-amber-400/70' : 'text-amber-600'}`}>
+                Limits results to sessions owned by this wallet only.
+              </p>
             </label>
 
             {/* Date range */}
@@ -290,6 +339,11 @@ export default function ChatSearchPanel({
                     })}
                   </p>
                   <HighlightedSnippet match={match} isDarkMode={isDarkMode} />
+                  {match.redacted && (
+                    <span className="text-[9px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 ml-1">
+                      Redacted
+                    </span>
+                  )}
                 </button>
               </li>
             ))}
@@ -301,6 +355,49 @@ export default function ChatSearchPanel({
       {hasAnyFilter && (
         <div className={`px-4 py-2 border-t text-xs ${isDarkMode ? 'border-gray-800 text-gray-500' : 'border-gray-100 text-gray-400'}`}>
           {results.length} result{results.length !== 1 ? 's' : ''}
+          {redactedCount > 0 && (
+            <span className="ml-2 text-amber-500">
+              ({redactedCount} redacted for privacy)
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowDeleteDialog(true)}
+            className="ml-auto text-[10px] text-red-400 hover:text-red-300 underline"
+            data-testid="delete-cached-records-button"
+          >
+            Delete cached records
+          </button>
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {showDeleteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-white font-semibold text-lg mb-4">
+              Delete Cached Records
+            </h3>
+            <p className="text-gray-300 text-sm mb-6">
+              This will remove all cached transaction drafts and pending
+              transaction records from localStorage. Search results will be
+              cleared. Payout-sensitive data in messages is already redacted.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteDialog(false)}
+                className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteCachedRecords}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete All Cached Records
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

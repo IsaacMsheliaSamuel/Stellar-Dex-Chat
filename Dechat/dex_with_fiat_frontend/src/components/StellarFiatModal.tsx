@@ -161,6 +161,7 @@ export default function StellarFiatModal({
   const [balanceSnapshot, setBalanceSnapshot] = useState<BalanceSnapshot | null>(null);
   const [reconfirmationNotice, setReconfirmationNotice] = useState<string | null>(null);
   const [hasConfirmedUpdatedValues, setHasConfirmedUpdatedValues] = useState(false);
+  const [quoteRefreshing, setQuoteRefreshing] = useState(false);
 
   useEffect(() => {
     const addr = connection.address || connection.publicKey;
@@ -522,48 +523,37 @@ export default function StellarFiatModal({
     recipient,
   ]);
 
-  useEffect(() => {
+  const refreshQuote = useCallback(async () => {
     const parsed = parseAssetAmount(amount, { decimals: 7 });
-    if (!parsed.success || parsed.stroops <= 0n) {
+    if (!parsed.success || parsed.stroops <= 0n) return;
+    const xlm = Number(parsed.stroops) / 1e7;
+    setQuoteRefreshing(true);
+    try {
+      const quote = await getTokenPriceWithStatus('XLM', fiatCurrency);
+      const snapshot = createQuoteSnapshot(
+        quote.price,
+        'XLM',
+        fiatCurrency,
+        quote.source,
+      );
+      setQuoteSnapshot(snapshot);
+      setFiatEstimate(formatFiatAmount(xlm * quote.price, fiatCurrency));
+      setIsFiatEstimateStale(quote.stale);
+    } catch {
       setFiatEstimate(null);
       setIsFiatEstimateStale(false);
-      return;
+    } finally {
+      setQuoteRefreshing(false);
     }
-
-    const xlm = Number(parsed.stroops) / 1e7;
-
-    let cancelled = false;
-
-    const fetchEstimate = async () => {
-      try {
-        const quote = await getTokenPriceWithStatus('XLM', fiatCurrency);
-        if (!cancelled) {
-          const snapshot = createQuoteSnapshot(
-            quote.price,
-            'XLM',
-            fiatCurrency,
-            quote.source,
-          );
-          setQuoteSnapshot(snapshot);
-          setFiatEstimate(
-            formatFiatAmount(xlm * quote.price, fiatCurrency),
-          );
-          setIsFiatEstimateStale(quote.stale);
-        }
-      } catch {
-        if (!cancelled) {
-          setFiatEstimate(null);
-          setIsFiatEstimateStale(false);
-        }
-      }
-    };
-
-    void fetchEstimate();
-
-    return () => {
-      cancelled = true;
-    };
   }, [amount, fiatCurrency]);
+
+  useEffect(() => {
+    void refreshQuote();
+  }, [refreshQuote]);
+
+  const quoteExpired = Boolean(
+    quoteSnapshot && Date.now() >= quoteSnapshot.expiresAt,
+  );
 
   const parsedAmountResult = parseAssetAmount(amount, { decimals: 7 });
   const stroopsAmount =
@@ -631,9 +621,10 @@ export default function StellarFiatModal({
       (isLoadingBridgeLimit || isLimitUnavailable || isOverLimit)) ||
     (isRiskyAmount &&
       riskConfirmation.trim().toUpperCase() !==
-      STELLAR_FIAT_RISK_CONFIRMATION_PHRASE) ||
+        STELLAR_FIAT_RISK_CONFIRMATION_PHRASE) ||
     Date.now() - lastActionTimestamp < SUBMIT_COOLDOWN_MS ||
-    (envVerification !== null && !envVerification.isValid);
+    (envVerification !== null && !envVerification.isValid) ||
+    quoteExpired;
 
   const operationType = isAdminMode ? 'Withdraw' : 'Deposit';
   const txNetwork = connection.network || 'TESTNET';
@@ -1461,6 +1452,59 @@ export default function StellarFiatModal({
                 <p role="status" className="text-amber-400 text-xs -mt-2 mb-4">
                   Estimated rate: live market prices are unavailable.
                 </p>
+              )}
+
+              {quoteSnapshot && (
+                <div
+                  data-testid="quote-expiry-info"
+                  className="theme-surface-muted theme-border mb-4 rounded-xl border p-3 text-[10px]"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="theme-text-muted">Quote source</span>
+                    <span className="theme-text-secondary font-mono">
+                      {quoteSnapshot.sourceId}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="theme-text-muted">Quote timestamp</span>
+                    <span className="theme-text-secondary">
+                      {new Date(quoteSnapshot.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="theme-text-muted">Quote expires</span>
+                    <span className={`theme-text-secondary font-mono ${
+                      quoteExpired ? 'text-red-400' : 'text-gray-400'
+                    }`}>
+                      {new Date(quoteSnapshot.expiresAt).toLocaleTimeString()}
+                      {quoteExpired ? ' (expired)' : ''}
+                    </span>
+                  </div>
+                  {quoteExpired && (
+                    <button
+                      type="button"
+                      onClick={() => void refreshQuote()}
+                      disabled={quoteRefreshing}
+                      data-testid="refresh-quote-button"
+                      className="mt-2 w-full text-[10px] text-blue-400 hover:text-blue-300 transition-colors py-1.5"
+                    >
+                      {quoteRefreshing
+                        ? 'Refreshing quote…'
+                        : 'Refresh quote (expired)'}
+                    </button>
+                  )}
+                  {!quoteExpired && (
+                    <button
+                      type="button"
+                      onClick={() => void refreshQuote()}
+                      disabled={quoteRefreshing}
+                      data-testid="refresh-quote-button"
+                      className="mt-2 w-full text-[10px] text-gray-400 hover:text-blue-400 transition-colors py-1.5 opacity-50 cursor-not-allowed"
+                    >
+                      Refresh quote
+                    </button>
+                  )}
+                </div>
               )}
 
             <div className="mb-4">

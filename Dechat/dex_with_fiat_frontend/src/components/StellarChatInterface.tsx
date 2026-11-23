@@ -1028,6 +1028,7 @@ function StellarChatInterfaceContent() {
                 setShowSearch(false);
               }}
               onClose={() => setShowSearch(false)}
+              connectedWalletAddress={connection.address}
             />
           </div>
         )}
