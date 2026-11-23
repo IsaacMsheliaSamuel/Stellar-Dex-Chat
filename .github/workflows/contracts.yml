@@ -249,6 +249,42 @@ jobs:
           # exceeds the documented thresholds in docs/RESOURCE_BUDGETS.md.
           cargo test test_resource_budgets -- --nocapture
 
+  mutation:
+    name: Security mutation tests
+    runs-on: ubuntu-latest
+    needs: [verify-toolchain]
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: Dechat/stellar-contracts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Cargo dependencies
+        id: cargo-cache
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
+        with:
+          workspaces: Dechat/stellar-contracts -> target
+          shared-key: "contracts-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Dechat/stellar-contracts/Cargo.lock') }}"
+
+      - name: Report cache status
+        run: |
+          if [ "${{ steps.cargo-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "cargo-cache: HIT" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "cargo-cache: MISS (new entry will be saved)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run security mutation tests
+        run: python3 scripts/run_security_mutation_tests.py
+
   build-wasm:
     name: Build WASM
     runs-on: ubuntu-latest
@@ -335,7 +371,7 @@ jobs:
   readiness-gate:
     name: Production Readiness Gate
     runs-on: ubuntu-latest
-    needs: [verify-toolchain, fmt, clippy, test, build-wasm]
+    needs: [verify-toolchain, fmt, clippy, test, mutation, build-wasm]
     permissions:
       contents: read
     steps:

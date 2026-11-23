@@ -1,7 +1,7 @@
-.PHONY: ci frontend-typecheck frontend-lint frontend-build frontend-test frontend-e2e contracts-test secret-scan secret-scan-staged secret-scan-test
+.PHONY: ci frontend-typecheck frontend-lint frontend-build frontend-test frontend-e2e contracts-test contracts-mutation secret-scan secret-scan-staged secret-scan-test
 
 # Reproduces the validation matrix used by the pull-request workflows.
-ci: secret-scan secret-scan-test frontend-typecheck frontend-lint frontend-build frontend-test frontend-e2e contracts-test
+ci: secret-scan secret-scan-test frontend-typecheck frontend-lint frontend-build frontend-test frontend-e2e contracts-test contracts-mutation
 
 secret-scan:
 	python3 tools/secret_scanner.py --path . --check-env
@@ -31,3 +31,6 @@ contracts-test:
 	cargo test --manifest-path Dechat/stellar-contracts/Cargo.toml
 	cargo build --manifest-path Dechat/stellar-contracts/Cargo.toml --target wasm32-unknown-unknown --release
 	cargo clippy --manifest-path Dechat/stellar-contracts/Cargo.toml --all-targets --all-features -- -D warnings
+
+contracts-mutation:
+	python3 Dechat/stellar-contracts/scripts/run_security_mutation_tests.py
