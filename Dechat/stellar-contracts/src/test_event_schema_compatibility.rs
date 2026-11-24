@@ -1,7 +1,8 @@
 #![cfg(test)]
 use crate::{
-    AdminActionExecutedEvent, AdminActionQueuedEvent, AdminRoleCheckEvent, AdminTransferEvent,
-    BatchFailEvent, BatchOkEvent, CircuitBreakerAutoResetEvent, CircuitBreakerResetEvent,
+    AdminActionExecutedEvent, AdminActionQueuedEvent, AdminRecoveryExecutedEvent,
+    AdminRecoveryProposedEvent, AdminRoleCheckEvent, AdminTransferEvent, BatchFailEvent,
+    BatchOkEvent, CircuitBreakerAutoResetEvent, CircuitBreakerResetEvent,
     CircuitBreakerTrippedEvent, DenyAddressEvent, DenyRemovedEvent, DeployHashEvent, DepositEvent,
     EmergencyRecoverySetEvent, FeeAccruedEvent, FeeRecipientSetEvent, FeeVaultReconciledEvent,
     FeeWithdrawalBatchNonceEvent, FeeWithdrawnEvent, HeartbeatBatchEvent, HeartbeatBatchFailEvent,
@@ -299,6 +300,24 @@ fn test_administrative_and_governance_event_versions() {
     };
     assert_eq!(role_chk.version, 1);
 
+    let recovery_proposed = AdminRecoveryProposedEvent {
+        version: EVENT_VERSION,
+        previous_admin: addr1.clone(),
+        successor: addr2.clone(),
+        recovery: addr1.clone(),
+        proposed_at: 100,
+        execute_after: 34_660,
+    };
+    assert_eq!(recovery_proposed.version, 1);
+
+    let recovery_executed = AdminRecoveryExecutedEvent {
+        version: EVENT_VERSION,
+        previous_admin: addr1.clone(),
+        successor: addr2.clone(),
+        recovery: addr1.clone(),
+    };
+    assert_eq!(recovery_executed.version, 1);
+
     let rescue = RescueEvent {
         version: EVENT_VERSION,
         token: addr2.clone(),
@@ -337,8 +356,8 @@ fn test_administrative_and_governance_event_versions() {
 
     let b_ok = BatchOkEvent {
         version: EVENT_VERSION,
-        success_count: 4,
-        failure_count: 1,
+        success_count: 5,
+        failure_count: 0,
         total_ops: 5,
     };
     assert_eq!(b_ok.version, 1);

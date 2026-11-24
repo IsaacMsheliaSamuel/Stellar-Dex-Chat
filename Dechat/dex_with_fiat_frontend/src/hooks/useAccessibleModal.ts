@@ -19,6 +19,13 @@ export interface AccessibleModalOptions {
    * error toast carrying {@link FOCUS_TRAP_FAILURE_MESSAGE}.
    */
   onError?: (message: string) => void;
+  /**
+   * Temporarily pause Escape handling and the Tab trap without unwinding the
+   * modal lifecycle. Used when a nested dialog (for example, a high-value
+   * challenge) owns focus; the parent keeps its scroll lock and focus single
+   * source of truth and resumes as soon as `suspended` becomes false.
+   */
+  suspended?: boolean;
 }
 
 function getFocusable(container: HTMLElement): HTMLElement[] {
@@ -95,10 +102,12 @@ export function useAccessibleModal(
   // dependencies — that is what makes the effect run once per open/close.
   const onCloseRef = useRef(onClose);
   const onErrorRef = useRef(options?.onError);
+  const suspendedRef = useRef(options?.suspended ?? false);
 
   useEffect(() => {
     onCloseRef.current = onClose;
     onErrorRef.current = options?.onError;
+    suspendedRef.current = options?.suspended ?? false;
   });
 
   useEffect(() => {
@@ -166,6 +175,10 @@ export function useAccessibleModal(
     applyInitialFocus(false);
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (suspendedRef.current) {
+        return;
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();

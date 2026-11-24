@@ -361,6 +361,8 @@ export default function BankDetailsModal({
   // Transfer timeline
   const [statusEvents, setStatusEvents] = useState<StatusEvent[]>([]);
   const [isPollingStatus, setIsPollingStatus] = useState(false);
+  // Freshness of the read model backing the status poll (Issue #291).
+  const [isTransferStatusStale, setIsTransferStatusStale] = useState(false);
 
   const pushStatusEvent = (status: TransferStatus, label?: string) => {
     setStatusEvents((prev: StatusEvent[]) => [
@@ -473,6 +475,14 @@ export default function BankDetailsModal({
         if (res.ok) {
           const json = await res.json();
           const status = json.data?.status;
+          const freshness = (
+            json as {
+              freshness?: { isStale?: boolean; stale?: boolean };
+            }
+          ).freshness;
+          setIsTransferStatusStale(
+            freshness?.isStale === true || freshness?.stale === true,
+          );
           if (json.success && status) {
             setTransferStatus(status);
 
@@ -895,6 +905,7 @@ export default function BankDetailsModal({
     setTransferReference('');
     setTransferStatus('pending');
     setTransferFailureReason('');
+    setIsTransferStatusStale(false);
     onClose();
   }, [step, xlmAmount, onClose]);
 
@@ -1720,6 +1731,7 @@ export default function BankDetailsModal({
                         copyValue: transferReference || undefined,
                       }))}
                       isPolling={isPollingStatus}
+                      isStale={isTransferStatusStale}
                     />
                   </motion.div>
                 )}
@@ -1821,6 +1833,7 @@ export default function BankDetailsModal({
                         copyValue: transferReference || undefined,
                       }))}
                       isPolling={false}
+                      isStale={isTransferStatusStale}
                     />
                   </motion.div>
                 )}

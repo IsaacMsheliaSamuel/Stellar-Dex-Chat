@@ -8,6 +8,9 @@ observability, alerting, and — per issue #122 — backup and disaster recovery
 
 - [Dead-letter replay](dead-letter-replay.md) — bounded, audited, idempotent
   operator replay of exhausted dead-letter payout jobs (issue #237).
+- [Workflow permission and action pinning policy](workflow-security.md) —
+  least-privilege `GITHUB_TOKEN` scopes, immutable action pins, and the
+  automated regression guard (issue #289).
 
 ## Scope of durable payout state
 

@@ -11,6 +11,10 @@ vi.mock('@/hooks/useMediaQuery', () => ({
   useMediaQuery: () => false,
 }));
 
+vi.mock('@/hooks/useRtlDirection', () => ({
+  useRtlDirection: () => ({ isRtl: false, dir: 'ltr' }),
+}));
+
 describe('TransferTimeline - skeleton loading state', () => {
   afterEach(() => {
     cleanup();
@@ -28,7 +32,7 @@ describe('TransferTimeline - skeleton loading state', () => {
       <TransferTimeline
         events={[{ status: 'initiated', timestamp: new Date() }]}
         isLoading={false}
-      />
+      />,
     );
 
     expect(screen.queryByTestId('skeleton-timeline')).toBeNull();
@@ -56,7 +60,7 @@ describe('TransferTimeline - skeleton loading state', () => {
           { status: 'pending', timestamp: new Date() },
         ]}
         isLoading={true}
-      />
+      />,
     );
 
     expect(screen.getByTestId('skeleton-timeline')).toBeTruthy();
@@ -68,10 +72,103 @@ describe('TransferTimeline - skeleton loading state', () => {
       <TransferTimeline
         events={[{ status: 'success', timestamp: new Date() }]}
         isLoading={false}
-      />
+      />,
     );
 
     expect(screen.queryByTestId('skeleton-timeline')).toBeNull();
     expect(screen.getByText('Transfer successful')).toBeTruthy();
+  });
+});
+
+describe('TransferTimeline payout announcements (#291)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const event = (status: 'initiated' | 'pending' | 'success' | 'failed') => ({
+    status,
+    timestamp: '2026-11-24T10:00:00.000Z',
+  });
+
+  it('announces queued, processing and settled transitions in plain language', () => {
+    const { rerender } = render(
+      <TransferTimeline events={[event('initiated')]} />,
+    );
+    const region = screen.getByTestId('payout-status-live-region');
+
+    expect(region).toHaveTextContent('Payout queued.');
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).toHaveAttribute('aria-live', 'polite');
+
+    rerender(
+      <TransferTimeline events={[event('initiated'), event('pending')]} />,
+    );
+    expect(region).toHaveTextContent('Payout processing.');
+
+    rerender(
+      <TransferTimeline
+        events={[event('initiated'), event('pending'), event('success')]}
+      />,
+    );
+    expect(region).toHaveTextContent('Payout settled.');
+  });
+
+  it('does not re-announce the same status on repeated polls or re-renders', () => {
+    const events = [event('initiated')];
+    const { rerender } = render(<TransferTimeline events={events} />);
+    const region = screen.getByTestId('payout-status-live-region');
+
+    expect(region).toHaveTextContent('Payout queued.');
+    rerender(<TransferTimeline events={[...events]} />);
+    rerender(<TransferTimeline events={[...events]} />);
+
+    expect(region).toHaveTextContent('Payout queued.');
+    expect(screen.getByTestId('payout-status-history')).toHaveAttribute(
+      'data-announcement-count',
+      '1',
+    );
+  });
+
+  it('announces failures assertively', () => {
+    render(<TransferTimeline events={[event('failed')]} />);
+    const region = screen.getByTestId('payout-status-live-region');
+
+    expect(region).toHaveTextContent('Payout failed.');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toHaveAttribute('aria-live', 'assertive');
+  });
+
+  it('announces stale data instead of presenting it as settled', () => {
+    const { rerender } = render(
+      <TransferTimeline events={[event('pending')]} isStale={true} />,
+    );
+    const region = screen.getByTestId('payout-status-live-region');
+
+    expect(region).toHaveTextContent(
+      'Payout status is out of date. Refresh before acting.',
+    );
+    expect(screen.getByTestId('payout-status-stale')).toBeTruthy();
+
+    // A terminal outcome remains authoritative even when the read model lags.
+    rerender(<TransferTimeline events={[event('success')]} isStale={true} />);
+    expect(region).toHaveTextContent('Payout settled.');
+    expect(screen.queryByTestId('payout-status-stale')).toBeNull();
+  });
+
+  it('keeps the full history reviewable outside the live region', () => {
+    render(
+      <TransferTimeline
+        events={[event('initiated'), event('pending'), event('success')]}
+      />,
+    );
+
+    const history = screen.getByTestId('payout-status-history');
+    expect(history).toHaveAttribute('aria-label', 'Payout status history');
+    expect(history).toHaveAttribute('aria-live', 'off');
+    expect(history.querySelectorAll('li')).toHaveLength(3);
+    expect(
+      screen.getByText(/Payout status history is not announced automatically/),
+    ).toBeTruthy();
   });
 });

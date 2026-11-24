@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "description": "Allowlist of job-level write scopes. Workflow-level permissions must be read-only; every 'write' scope must appear here for the exact workflow::job that uses it. Managed by tools/workflow_guard.py.",
+  "allowedWriteScopes": {
+    ".github/workflows/auto-merge.yml::auto-merge": [
+      "contents",
+      "pull-requests"
+    ],
+    ".github/workflows/changelog.yml::update-changelog": [
+      "contents"
+    ],
+    ".github/workflows/coverage-comment.yml::comment": [
+      "pull-requests"
+    ],
+    ".github/workflows/deploy-futurenet.yml::deploy": [
+      "deployments"
+    ],
+    ".github/workflows/lint-repo.yml::lint": [
+      "checks"
+    ],
+    ".github/workflows/preview-deploy.yml::deploy-preview": [
+      "pull-requests",
+      "deployments"
+    ],
+    ".github/workflows/preview-teardown.yml::teardown-on-close": [
+      "pull-requests",
+      "deployments"
+    ],
+    ".github/workflows/preview-teardown.yml::expiry-sweep": [
+      "pull-requests",
+      "deployments"
+    ],
+    ".github/workflows/security-audit.yml::release-sbom": [
+      "contents"
+    ],
+    ".github/workflows/security-audit.yml::open-tracking-issue": [
+      "issues"
+    ],
+    ".github/workflows/signed-attestations.yml::attest-contract": [
+      "attestations",
+      "id-token"
+    ],
+    ".github/workflows/signed-attestations.yml::attest-frontend": [
+      "attestations",
+      "id-token"
+    ],
+    ".github/workflows/signed-attestations.yml::release-upload": [
+      "contents"
+    ],
+    ".github/workflows/wasm-size-comment.yml::comment": [
+      "pull-requests"
+    ]
+  }
+}

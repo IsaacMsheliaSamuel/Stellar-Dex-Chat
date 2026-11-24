@@ -32,6 +32,36 @@ To update a pinned version, change the manifest (and `rust-toolchain.toml` for
 Rust components) in a dedicated pull request and regenerate the bindings as
 described below.
 
+## Workflow permissions and action pinning
+
+GitHub Actions workflows follow the same pinning discipline as the build
+toolchain (issue #289):
+
+- Every workflow declares an explicit, read-only top-level `permissions` block.
+  Jobs that truly need a write scope declare it at **job level** only, and that
+  scope must be listed for the exact `workflow::job` in
+  `.github/workflow-policy.json`.
+- Every third-party `uses:` reference is pinned to a 40-character commit SHA.
+  A mutable tag or branch (`@v4`, `@stable`, `@main`) is not accepted, even on a
+  trusted publisher. `docker://` images must use a `@sha256:` digest. Local
+  reusable workflows (`./.github/workflows/...`) are exempt.
+- The trailing `# vX.Y.Z` comment is informational: the SHA is authoritative.
+  Keep the comment accurate when you bump a pin.
+
+Run the audit and its focused tests locally before opening a pull request:
+
+```sh
+python3 tools/workflow_guard.py
+python3 -m unittest discover -s tools/tests -p 'test_workflow_guard.py' -v
+```
+
+Both commands are dependency-free and run inside the `Lint Repo / lint` CI
+check. If you add a job that needs a new write scope, add the smallest possible
+entry to `.github/workflow-policy.json` in the same pull request and explain why
+it is required. See [docs/operations/workflow-security.md](docs/operations/workflow-security.md)
+for the full policy and the recovery procedure for a rejected pin or privilege
+change.
+
 ## Prerequisites
 
 Before running any validation command, make sure the following tools are installed and available on your `PATH`:

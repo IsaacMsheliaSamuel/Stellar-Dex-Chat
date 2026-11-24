@@ -15,6 +15,18 @@ This specification establishes:
 3. Documented regression thresholds.
 4. Continuous automated validation in CI without relying on machine-dependent wall-clock timing.
 
+## Withdrawal Queue State Bound
+
+The contract accepts at most `MAX_WITHDRAWAL_QUEUE_DEPTH` (100) active
+withdrawal requests. `request_withdrawal` checks the current depth and the
+next request/tier counters before rate-limit accounting, TTL extension, or queue
+storage writes. A full queue returns `QueueLimitReached`; execution,
+cancellation, and expiry reclamation free an active slot. The limit bounds
+live request and linked-index state while keeping queue growth and the
+scheduler's worst-case footprint deterministic. The bounded queue migration
+continues to process existing requests in pages of at most 25; it does not
+silently discard legacy requests that predate this limit.
+
 ---
 
 ## 2. Deterministic Metering vs. Wall-Clock Timing

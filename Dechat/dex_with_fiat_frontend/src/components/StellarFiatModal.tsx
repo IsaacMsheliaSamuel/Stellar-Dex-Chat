@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   Loader2,
@@ -10,12 +10,10 @@ import {
   Download,
   WifiOff,
   AlertTriangle,
-  RefreshCw,
-  Clock,
-  ShieldAlert,
 } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import CopyButton from '@/components/ui/CopyButton';
+import ErrorSummary from '@/components/ErrorSummary';
 import { useRtlDirection } from '@/hooks/useRtlDirection';
 import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -24,11 +22,12 @@ import {
   CONTRACT_ID,
   depositToContract,
   withdrawFromContract,
+  verifyNetworkAndContractIdentity,
   clearCache,
   type FeeEstimate,
   type PreSignSimulationResult,
 } from '@/lib/stellarContract';
-import { xlmToStroops, stroopsToXlm as stroopsToDisplay } from '@/lib/stroops';
+import { stroopsToXlm as stroopsToDisplay } from '@/lib/stroops';
 import { parseAssetAmount, formatAssetAmount } from '@/lib/exactAmount';
 import {
   savePendingRecoveryRecord,
@@ -48,6 +47,7 @@ import { downloadReceipt } from '@/lib/receipt';
 import type { ChatMessage } from '@/types';
 import { useAccessibleModal } from '@/hooks/useAccessibleModal';
 import { useIdempotentAction } from '@/hooks/useIdempotentAction';
+import { classifyError, type AccessibleError } from '@/lib/errorMessages';
 import {
   STELLAR_FIAT_RISK_CONFIRMATION_PHRASE,
   validateStellarFiatModalForm,
@@ -58,7 +58,6 @@ import {
   BalanceSnapshot,
   createQuoteSnapshot,
   createBalanceSnapshot,
-  revalidateFormInputs,
 } from '@/lib/transactionFormProtection';
 import * as protectionModule from '@/lib/transactionFormProtection';
 import * as stellarContractModule from '@/lib/stellarContract';
@@ -110,6 +109,8 @@ export default function StellarFiatModal({
   messages = [],
 }: StellarFiatModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const twoFactorModalRef = useRef<HTMLDivElement>(null);
+  const confirmSignRef = useRef<HTMLButtonElement>(null);
   const { dir } = useRtlDirection();
   // Synchronous guard against rapid double-submits: state updates are batched,
   // so the submit button stays enabled across same-tick clicks. A ref closes
@@ -123,6 +124,21 @@ export default function StellarFiatModal({
     sessionExpired,
     reconnect,
   } = useStellarWallet();
+
+  // Declared at the top of the component so effects can safely list them as
+  // dependencies and React always sees the same hook order while closed.
+  const getScopedPendingKey = useCallback(() => {
+    if (!connection.publicKey) return null;
+    const net = connection.network || 'TESTNET';
+    return `stellar_pending_tx_${net}_${connection.publicKey}`;
+  }, [connection.publicKey, connection.network]);
+
+  const clearScopedPending = useCallback(() => {
+    const scoped = getScopedPendingKey();
+    if (scoped) localStorage.removeItem(scoped);
+    localStorage.removeItem('stellar_pending_tx');
+  }, [getScopedPendingKey]);
+
   const { addNotification } = useNotifications();
   const { addEntry } = useTxHistory();
   const { highValueThreshold, twoFactorEnabled } = useUserPreferences();
@@ -157,6 +173,10 @@ export default function StellarFiatModal({
   const [lastActionTimestamp, setLastActionTimestamp] = useState(0);
   const [showTwoFactorModal, setShowTwoFactorModal] = useState(false);
   const [twoFactorConfirmation, setTwoFactorConfirmation] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
+  // Once the high-value challenge has been satisfied, subsequent review clicks
+  // must not re-open it. Any change to a critical value resets this gate.
+  const [hasPassedTwoFactor, setHasPassedTwoFactor] = useState(false);
   const [quoteSnapshot, setQuoteSnapshot] = useState<QuoteSnapshot | null>(null);
   const [balanceSnapshot, setBalanceSnapshot] = useState<BalanceSnapshot | null>(null);
   const [reconfirmationNotice, setReconfirmationNotice] = useState<string | null>(null);
@@ -228,6 +248,7 @@ export default function StellarFiatModal({
     setActivePreset(value);
     setReconfirmationNotice(null);
     setHasConfirmedUpdatedValues(false);
+    setHasPassedTwoFactor(false);
   };
   const isMounted = useRef(true);
 
@@ -251,6 +272,12 @@ export default function StellarFiatModal({
   useEffect(() => {
     if (!isOpen) {
       hasInitializedOpenRef.current = false;
+      // Escape closes through the parent callback, not handleClose(), so clear
+      // the high-value gate here as well before the next open.
+      setHasPassedTwoFactor(false);
+      setShowTwoFactorModal(false);
+      setTwoFactorConfirmation('');
+      setTwoFactorError(null);
       return;
     }
 
@@ -315,9 +342,14 @@ export default function StellarFiatModal({
       const disconnected = !connection.isConnected;
 
       if (addressChanged || networkChanged || disconnected) {
-        // Invalidate simulation and confirmation state immediately on context change
+        // Invalidate simulation and confirmation state immediately on context change.
+        // A challenge passed for one wallet/network must not authorize another.
         setFeeEstimate(null);
         setRequiresPreSignConfirmation(false);
+        setHasPassedTwoFactor(false);
+        setShowTwoFactorModal(false);
+        setTwoFactorConfirmation('');
+        setTwoFactorError(null);
 
         if (disconnected) {
           setStatus('error');
@@ -454,7 +486,14 @@ export default function StellarFiatModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, refreshXlmBalance, addNotification]);
+  }, [
+    isOpen,
+    refreshXlmBalance,
+    addNotification,
+    clearScopedPending,
+    connection.network,
+    connection.publicKey,
+  ]);
 
   useEffect(() => {
     if (!isOpen || !connection.isConnected) {
@@ -638,7 +677,33 @@ export default function StellarFiatModal({
   const operationType = isAdminMode ? 'Withdraw' : 'Deposit';
   const txNetwork = connection.network || 'TESTNET';
 
-  useAccessibleModal(isOpen, modalRef, onClose);
+  const cancelTwoFactor = () => {
+    setShowTwoFactorModal(false);
+    setTwoFactorConfirmation('');
+    setTwoFactorError(null);
+  };
+
+  // The challenge is a nested dialog: suspend the parent trap while it is open
+  // so Escape and Tab apply to the challenge, not to the underlying form.
+  useAccessibleModal(isOpen, modalRef, onClose, {
+    suspended: showTwoFactorModal,
+  });
+  useAccessibleModal(showTwoFactorModal, twoFactorModalRef, cancelTwoFactor, {
+    onError: (message) => setTwoFactorError(message),
+  });
+
+  // After simulation succeeds, move keyboard focus to the explicit review
+  // action instead of leaving focus on a now-stale submit button.
+  // The skeleton is only for the first paint of an opened dialog.
+  useEffect(() => {
+    setIsLoadingUI(false);
+  }, []);
+
+  useEffect(() => {
+    if (requiresPreSignConfirmation && !isTxProcessing && status !== 'loading') {
+      confirmSignRef.current?.focus();
+    }
+  }, [requiresPreSignConfirmation, isTxProcessing, status]);
 
   useEffect(() => {
     if (
@@ -738,18 +803,6 @@ export default function StellarFiatModal({
       : null;
   };
 
-  const getScopedPendingKey = useCallback(() => {
-    if (!connection.publicKey) return null;
-    const net = connection.network || 'TESTNET';
-    return `stellar_pending_tx_${net}_${connection.publicKey}`;
-  }, [connection.publicKey, connection.network]);
-
-  const clearScopedPending = useCallback(() => {
-    const scoped = getScopedPendingKey();
-    if (scoped) localStorage.removeItem(scoped);
-    localStorage.removeItem('stellar_pending_tx');
-  }, [getScopedPendingKey]);
-
   const handleAction = async (bypassReconfirmation = false) => {
     if (!connection.isConnected || sessionExpired) {
       const rawMsg = sessionExpired
@@ -770,7 +823,14 @@ export default function StellarFiatModal({
     }
 
     // Show two-factor confirmation modal for high-value transfers
-    if (isRiskyAmount && twoFactorEnabled && !showTwoFactorModal) {
+    if (
+      isRiskyAmount &&
+      twoFactorEnabled &&
+      !hasPassedTwoFactor &&
+      !showTwoFactorModal
+    ) {
+      setTwoFactorConfirmation('');
+      setTwoFactorError(null);
       setShowTwoFactorModal(true);
       return;
     }
@@ -786,6 +846,11 @@ export default function StellarFiatModal({
     });
     if (zodMessage) {
       setErrorMsg(zodMessage);
+      // Keep validation feedback inside the nested challenge where the user is
+      // looking, rather than behind it in the parent error summary.
+      if (showTwoFactorModal) {
+        setTwoFactorError(zodMessage);
+      }
       const fieldId = zodMessage.toLowerCase().includes('amount')
         ? 'sfm-amount'
         : zodMessage.toLowerCase().includes('recipient')
@@ -796,6 +861,11 @@ export default function StellarFiatModal({
       setAccessibleError(classifyError(zodMessage, { fieldId, safeValues: { amount, note: note.trim() } }));
       setStatus('error');
       return;
+    }
+
+    if (showTwoFactorModal) {
+      setHasPassedTwoFactor(true);
+      cancelTwoFactor();
     }
 
     if (
@@ -1068,6 +1138,8 @@ export default function StellarFiatModal({
     setRequiresPreSignConfirmation(false);
     setSimulationResult(null);
     setSimulationError(null);
+    setHasPassedTwoFactor(false);
+    cancelTwoFactor();
     onClose();
   };
 
@@ -1081,6 +1153,7 @@ export default function StellarFiatModal({
         ref={modalRef}
         role="dialog"
         aria-modal="true"
+        dir={dir}
         aria-label={isAdminMode ? 'Withdraw from Bridge' : 'Deposit to Bridge'}
         tabIndex={-1}
         data-testid="stellar-fiat-modal"
@@ -1395,7 +1468,7 @@ export default function StellarFiatModal({
               </div>
             )}
             <div className="mb-4">
-              <label className="theme-text-secondary block text-sm mb-1">
+              <label htmlFor="sfm-amount" className="theme-text-secondary block text-sm mb-1">
                 Amount (XLM)
               </label>
               <div className="flex gap-2 mb-2">
@@ -1414,15 +1487,22 @@ export default function StellarFiatModal({
                   </button>
                 ))}
               </div>
+              <p id="sfm-amount-hint" className="sr-only">
+                Enter the amount in XLM. A dot or comma may be used as the decimal separator.
+              </p>
               <input
                 type="text"
                 inputMode="decimal"
                 id="sfm-amount"
                 value={amount}
+                aria-describedby={
+                  amountFeedback ? 'sfm-amount-hint sfm-amount-error' : 'sfm-amount-hint'
+                }
                 onChange={(e) => {
                   setAmount(e.target.value);
                   setActivePreset(null);
                   setRequiresPreSignConfirmation(false);
+                  setHasPassedTwoFactor(false);
                 }}
                 placeholder="0.00"
                 disabled={isTransactionBusy}
@@ -1449,7 +1529,13 @@ export default function StellarFiatModal({
             </div>
 
             {fiatEstimate && (
-              <p className="theme-text-secondary text-xs -mt-2 mb-4">
+              <p
+                id="sfm-fiat-estimate"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="theme-text-secondary text-xs -mt-2 mb-4"
+              >
                 ~={' '}
                 <span className="theme-text-primary font-medium">
                   {fiatEstimate}
@@ -1458,13 +1544,13 @@ export default function StellarFiatModal({
               </p>
             )}
               {isFiatEstimateStale && (
-                <p role="status" className="text-amber-400 text-xs -mt-2 mb-4">
+                <p role="status" aria-live="polite" aria-atomic="true" className="text-amber-400 text-xs -mt-2 mb-4">
                   Estimated rate: live market prices are unavailable.
                 </p>
               )}
 
             <div className="mb-4">
-              <label className="theme-text-secondary block text-sm mb-1">
+              <label htmlFor="sfm-note" className="theme-text-secondary block text-sm mb-1">
                 Optional note
               </label>
               <textarea
@@ -1531,10 +1617,22 @@ export default function StellarFiatModal({
             )}
 
             {requiresPreSignConfirmation && !isStatusLoading && (
-              <div data-testid="pre-sign-summary" className="theme-surface-muted theme-border mb-4 rounded-xl border px-4 py-3">
+              <div
+                data-testid="pre-sign-summary"
+                role="region"
+                aria-label="Pre-sign transaction summary"
+                className="theme-surface-muted theme-border mb-4 rounded-xl border px-4 py-3"
+              >
                 <h3 className="theme-text-muted text-[10px] font-bold uppercase tracking-widest mb-3">
                   Pre-Sign Transaction Summary
                 </h3>
+                <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                  Review ready: {operationType} of{' '}
+                  {stroopsAmount ? formatAssetAmount(stroopsAmount, { decimals: 7 }) : amount} XLM
+                  on {txNetwork}. Estimated fee{' '}
+                  {feeEstimate?.fee !== undefined ? `~${feeEstimate.fee.toFixed(7)} XLM` : 'simulating'}.
+                  Check the signer and expected effects before confirming.
+                </p>
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="theme-text-secondary">Operation</span>
@@ -1613,11 +1711,12 @@ export default function StellarFiatModal({
                     Cancel
                   </button>
                   <button
+                    ref={confirmSignRef}
                     type="button"
                     data-testid="confirm-sign-button"
                     disabled={Boolean(isSimulationStale || simulationError || isLoadingFee)}
                     onClick={() => void handleAction()}
-                    className="theme-primary-button flex-1 rounded-lg py-2 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-blue-600 text-white hover:bg-blue-700 flex-1 rounded-lg py-2 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Confirm & Sign
                   </button>
@@ -1706,17 +1805,22 @@ export default function StellarFiatModal({
 
             {isRiskyAmount && (
               <div className="theme-soft-warning mb-4 rounded-xl border px-4 py-3">
-                <p className="font-semibold text-sm mb-2">
+                <p id="sfm-risk-title" className="font-semibold text-sm mb-2">
                   Large amount confirmation required
                 </p>
-                <p className="text-xs mb-3">
+                <p id="sfm-risk-hint" className="text-xs mb-3">
                   Amounts above {highValueThreshold} XLM require an
                   additional confirmation phrase before submission.
                 </p>
+                <label htmlFor="sfm-risk-confirmation" className="sr-only">
+                  Large amount confirmation phrase
+                </label>
                 <input
+                  id="sfm-risk-confirmation"
                   type="text"
                   value={riskConfirmation}
                   onChange={(e) => setRiskConfirmation(e.target.value)}
+                  aria-describedby="sfm-risk-hint"
                   placeholder={STELLAR_FIAT_RISK_CONFIRMATION_PHRASE}
                   className="theme-input w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500"
                 />
@@ -1725,14 +1829,17 @@ export default function StellarFiatModal({
 
             {isAdminMode && (
               <div className="mb-4">
-                <label className="theme-text-secondary block text-sm mb-1">
+                <label htmlFor="sfm-recipient" className="theme-text-secondary block text-sm mb-1">
                   Recipient address (leave blank for self)
                 </label>
                 <input
                   type="text"
                   id="sfm-recipient"
                   value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
+                  onChange={(e) => {
+                    setRecipient(e.target.value);
+                    setHasPassedTwoFactor(false);
+                  }}
                   placeholder="G..."
                   disabled={isTransactionBusy}
                   aria-invalid={accessibleError?.fieldId === 'sfm-recipient' ? true : undefined}
@@ -1759,7 +1866,7 @@ export default function StellarFiatModal({
             {status === 'error' && (
               <ErrorSummary
                 id="sfm-error-summary"
-                error={accessibleError}
+                error={accessibleError ?? (errorMsg ? classifyError(errorMsg) : null)}
                 onDismiss={() => { setAccessibleError(null); setStatus('idle'); setErrorMsg(''); }}
                 data-testid="error-message"
               />
@@ -1808,7 +1915,7 @@ export default function StellarFiatModal({
               <button
                 onClick={handleAction}
                 disabled={isSubmitDisabled || isTxProcessing}
-                className="theme-primary-button w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold transition-all"
+                className="bg-blue-600 hover:bg-blue-700 w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold transition-all"
               >
                 {isStatusLoading || isTxProcessing ? (
                   <>
@@ -1853,40 +1960,73 @@ export default function StellarFiatModal({
         )}
       </div>
 
-      {/* Two-Factor Confirmation Modal */}
+      {/* Two-Factor Confirmation Modal (nested dialog) */}
       {showTwoFactorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-white font-semibold text-lg mb-4">
+        <div
+          className="theme-overlay fixed inset-0 z-[60] flex items-center justify-center backdrop-blur-sm"
+          data-testid="two-factor-modal-overlay"
+        >
+          <div
+            ref={twoFactorModalRef}
+            role="dialog"
+            aria-modal="true"
+            dir={dir}
+            aria-labelledby="sfm-two-factor-title"
+            aria-describedby="sfm-two-factor-hint"
+            tabIndex={-1}
+            data-testid="two-factor-modal"
+            className="theme-surface theme-border rounded-xl border p-6 max-w-md w-full mx-4"
+          >
+            <h3 id="sfm-two-factor-title" className="theme-text-primary font-semibold text-lg mb-4">
               Two-Factor Confirmation
             </h3>
-            <p className="text-gray-300 text-sm mb-4">
+            <p id="sfm-two-factor-hint" className="theme-text-secondary text-sm mb-4">
               For your security, please enter the last 4 digits of your wallet address to confirm this high-value transfer.
             </p>
-            <p className="text-gray-400 text-xs mb-2">
+            <p className="theme-text-muted text-xs mb-3">
               Your wallet: {connection.address.slice(0, 8)}…{connection.address.slice(-4)}
             </p>
+            <label htmlFor="sfm-two-factor" className="theme-text-secondary block text-xs font-medium mb-1">
+              Last 4 digits of wallet address
+            </label>
             <input
+              id="sfm-two-factor"
               type="text"
               value={twoFactorConfirmation}
-              onChange={(e) => setTwoFactorConfirmation(e.target.value)}
+              onChange={(e) => {
+                setTwoFactorConfirmation(e.target.value);
+                setTwoFactorError(null);
+              }}
               placeholder="Enter last 4 digits"
               maxLength={4}
-              className="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-4"
+              aria-invalid={twoFactorError ? true : undefined}
+              aria-describedby={
+                twoFactorError ? 'sfm-two-factor-hint sfm-two-factor-error' : 'sfm-two-factor-hint'
+              }
+              className="theme-input w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500 mb-4"
             />
+            {twoFactorError && (
+              <p
+                id="sfm-two-factor-error"
+                role="alert"
+                className="theme-soft-danger flex items-center gap-2 rounded-lg px-3 py-2 mb-4 text-xs"
+              >
+                <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                {twoFactorError}
+              </p>
+            )}
             <div className="flex gap-3">
               <button
-                onClick={() => {
-                  setShowTwoFactorModal(false);
-                  setTwoFactorConfirmation('');
-                }}
-                className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                type="button"
+                onClick={cancelTwoFactor}
+                className="theme-border theme-text-primary flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleAction}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                type="button"
+                onClick={() => void handleAction()}
+                className="bg-blue-600 text-white hover:bg-blue-700 flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
               >
                 Confirm
               </button>

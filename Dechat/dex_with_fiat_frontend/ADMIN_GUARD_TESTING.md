@@ -16,6 +16,65 @@ maintainers a direct CI-equivalent command for reviewing it.
 
 ---
 
+# Emergency pause & recovery operator drill
+
+This drill is a repeatable testnet/local-network rehearsal for the emergency
+pause and recovery path (issue #191). It pauses the contract, confirms that
+mutations are blocked while read-only views remain available, verifies that
+queued liabilities are preserved, and rehearses authorized recovery. Run it
+against a local network or testnet — never against mainnet.
+
+## Preconditions
+
+- A deployed contract instance on a local network or testnet.
+- The operator holds the admin key authorized to pause/unpause.
+- At least one queued liability exists (e.g. a pending payout) so the drill can
+  confirm it survives the pause.
+
+## Drill steps
+
+1. **Snapshot state.** Record the current queued liabilities and any balances
+   you intend to compare after recovery.
+2. **Pause (authorized).** Submit the pause as the admin. Expect success and a
+   paused state on the contract.
+3. **Confirm blocked mutations.** Attempt a state-changing call (e.g. enqueue a
+   payout or release funds). Expect the call to be rejected while paused and
+   confirm no state change occurred.
+4. **Confirm views remain available.** Call read-only views (balances, queued
+   liabilities, paused flag). Expect them to succeed and return the pre-pause
+   data.
+5. **Verify queued liabilities.** Confirm the queued liabilities recorded in
+   step 1 are unchanged and still present while paused.
+6. **Unauthorized attempts (failure cases).** Attempt pause and unpause as a
+   non-admin. Expect both to be rejected with no state change.
+7. **Recover (authorized unpause).** Submit the unpause as the admin. Expect
+   success and a resumed state.
+8. **Confirm recovery.** Re-run the queued-liability view and confirm the
+   liabilities are intact and can now be processed; confirm mutations succeed
+   again.
+
+## Expected outcomes
+
+| Step | Actor      | Expected result                          |
+| ---- | ---------- | ---------------------------------------- |
+| 2    | admin      | pause succeeds, contract paused          |
+| 3    | any        | mutation rejected, no state change       |
+| 4    | any        | read-only views succeed                  |
+| 5    | any        | queued liabilities unchanged             |
+| 6    | non-admin  | pause/unpause rejected, no state change  |
+| 7    | admin      | unpause succeeds, contract resumed       |
+| 8    | any        | liabilities intact, mutations succeed    |
+
+## Regression coverage
+
+The focused regression tests cover the normal pause/recovery path plus the
+failure and authorization edge cases above (blocked mutations while paused,
+read-only views during pause, preserved queued liabilities, and rejected
+unauthorized pause/unpause). Run them with the contract test command used in
+CI (see `.github/workflows/contracts.yml`).
+
+---
+
 # Threat Model & Abuse-Case Register
 
 - **Document version:** `TM-1.0.0`
@@ -175,84 +234,4 @@ the security boundary — the server enforces the check on every request.
 - **Self-approval** → `403`, no state change.
 - **Unauthorized approver** (not an admin) → `403`, no state change.
 - **Missing reason** → `400`, no state change.
-- **Already-approved / already-executed action** → `409`, no duplicate
-  execution.
-- **Stale before state** (payout changed since request) → rejected; the
-  requester must re-submit against the current state.
-
-## Prohibited
-
-- Do **not** allow a single admin to both request and approve a high-risk
-  action.
-- Do **not** execute a high-risk action without a persisted approval record.
-- Do **not** rely on hidden UI controls as the security boundary.
-
-## Validation
-
-Focused regression tests cover the normal path (request → independent
-approval → execution) and the failure/authorization edge cases above
-(self-approval, unauthorized approver, missing reason, duplicate execution,
-stale state).
-
----
-
-# Capability Flags & Kill-Switch Runbook
-
-This section documents the staged-rollout and kill-switch controls for
-frontend and API capabilities (issue #123). Flags are **server-controlled** and
-**per-environment**; the frontend only reflects server state and never decides
-whether a capability is allowed.
-
-## Flag model
-
-Each capability has an explicit default per environment. A flag is a boolean
-`enabled` value; the server is the single source of truth.
-
-| Capability | development | staging | production |
-| ---------- | ----------- | ------- | ---------- |
-| `frontend.trading` | enabled | enabled | enabled |
-| `frontend.payouts` | enabled | enabled | disabled |
-| `api.toolRouting` | enabled | enabled | enabled |
-| `api.payouts` | enabled | disabled | disabled |
-
-Defaults are declared in code (not inferred from missing values): an unknown or
-missing flag resolves to **disabled** (fail-closed).
-
-## Enforcement
-
-- The server evaluates the flag on every request for the capability and
-  rejects disabled capabilities with a `403` before any state change.
-- Hiding a UI control is **not** enforcement; direct API requests are checked
-  the same way as UI-originated requests.
-- Flags never weaken wallet signature verification or on-chain (Soroban)
-  authorization. A disabled flag blocks the capability; an enabled flag does
-  **not** bypass signature or contract checks.
-
-## Mutation & audit
-
-- Only authorized administrators (enforced by `AdminGuard` / server admin
-  allow-list) may change a flag. Unauthorized callers receive `403` and no
-  change is applied.
-- Every change is audited with: **actor**, **timestamp**, **reason**, and
-  **prior value**. The audit entry is written atomically with the change.
-
-## Rollback / kill-switch procedure
-
-1. Identify the capability and environment.
-2. Set the flag to `disabled` with a written reason.
-3. Confirm the audit entry records actor, time, reason, and prior value.
-4. Verify a direct request to the capability is rejected (`403`).
-5. Re-enable only after the root cause is resolved and re-tested.
-
-## Prohibited
-
-- Do **not** bypass on-chain checks or signature verification to "work around"
-  a disabled flag.
-- Do **not** rely on hidden UI controls as a security boundary.
-- Do **not** mutate flags outside the audited, authorized path.
-
-## Validation
-
-Test all flag states (enabled/disabled per environment) and direct requests to
-each capability. Confirm unauthorized callers cannot change or bypass flags and
-that disabled capabilities are rejected server-side.
+- **Already-approved action** → rejected, no duplicate execution.

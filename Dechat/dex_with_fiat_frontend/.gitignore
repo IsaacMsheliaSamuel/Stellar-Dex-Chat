@@ -13,6 +13,7 @@
 # testing
 /coverage
 /.vitest-reports
+/critical-coverage-report.json
 
 # next.js
 /.next/

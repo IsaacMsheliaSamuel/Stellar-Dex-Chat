@@ -3,9 +3,17 @@ name: Lint Repo
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # reviewdog's github-pr-check reporter needs to publish check runs; every
+    # other scope stays read-only. See .github/workflow-policy.json.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,3 +43,11 @@ jobs:
           reporter: github-pr-check
           filter_mode: nofilter
           fail_on_error: true
+
+      # Issue #289: detect privilege or pinning regressions before merge.
+      # Both the policy audit and its focused unit tests are dependency-free.
+      - name: Audit workflow permissions and action pins
+        run: python3 tools/workflow_guard.py
+
+      - name: Test workflow guard
+        run: python3 -m unittest discover -s tools/tests -p 'test_workflow_guard.py' -v

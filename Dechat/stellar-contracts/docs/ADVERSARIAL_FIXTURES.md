@@ -25,13 +25,26 @@ This specification documents:
 | **Price Oracle** | Panics / reverts on `get_price` | **Rejected** | Transaction reverts | Host discards all state modifications |
 | **Price Oracle** | Extreme price shift beyond `max_slippage` | **Rejected** | Aborts with `Error::SlippageExceeded` | Request remains queued; liabilities intact |
 | **Token Contract** | Standard transfer success | Supported | Funds move; accounting updated | Total deposits / withdrawals match |
-| **Token Contract** | Reverts on deposit transfer | **Rejected** | Transaction reverts | No receipt issued; nonce not burned |
-| **Token Contract** | Reverts on withdrawal transfer | **Rejected** | Transaction reverts | Queue position preserved; liability intact |
-| **Token Contract** | Reverts on fee withdrawal transfer | **Rejected** | Transaction reverts | Fee remains accrued; nonce not burned |
+| **Token Contract** | Reverts on deposit transfer | **Rejected** | Returns `Error::TransferFailed` | No receipt or fiat valuation survives |
+| **Token Contract** | Reverts on withdrawal transfer | **Rejected** | Returns `Error::TransferFailed` | Queue position preserved; liability intact |
+| **Token Contract** | Reverts on fee withdrawal transfer | **Rejected** | Returns `Error::TransferFailed` | Fee remains accrued; nonce not burned |
+| **Token Contract** | Requires transfer authorization | **Rejected** | Transfer invocation fails atomically | No balance or accounting delta |
+| **Token Contract** | Returns a short or mismatched balance delta | **Rejected** | Returns `Error::ShortTransfer` or `Error::TransferFailed` | Deposit accounting and volume roll back |
+| **Token Contract** | Uses non-seven decimal precision | Supported | Fiat value uses token `decimals()` | Receipt records precision and deposit-time value |
+| **Token Contract** | Cannot answer balance or decimals query | **Rejected** | Returns `Error::TokenInterfaceInvalid` | No partial state or event survives |
 
 ---
 
-## 3. Atomic State Rollback Guarantee
+## 3. Token Conformance Fixture
+
+`src/test_token_conformance.rs` provides a configurable token fixture for
+variable decimals, authorization-required transfers, transfer rejection, short
+delivery, and normal balance changes. The tests exercise the bridge's checked
+transfer boundary and verify that failed calls do not retain fiat-volume
+updates. `src/test_oracle_adapter.rs` covers decimal normalization, freshness,
+source count, spread bounds, and breaker recovery.
+
+## 4. Atomic State Rollback Guarantee
 
 A core invariant of the `FiatBridge` protocol is transactional atomicity:
 - If a dependency reverts at any point during execution, the host environment rolls back all storage writes and event emissions.
