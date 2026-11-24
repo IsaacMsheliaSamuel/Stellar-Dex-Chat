@@ -1372,9 +1372,11 @@ Repo Avatar
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
+- **contracts:** Add focused security mutation tests
 - Enforce least-privilege workflow permissions and pinned actions
 - **changelog:** Update changelog [skip ci]
 - **deps:** Bump the actions group with 2 updates
+- **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
@@ -1949,3 +1951,6 @@ feat(security): release-time secret scanning with expiring exceptions
 - Merge pull request #350 from MsseliaSamuel/security/issue-289-workflow-least-privilege
 
 ci: enforce least-privilege workflow permissions and pinned actions
+- Merge pull request #342 from olubukolatanko209-doc/feat/issue-271-mutation-tests
+
+test(contracts): add focused security mutation tests
