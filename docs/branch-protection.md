@@ -26,7 +26,8 @@ adds this doc (and the `CODEOWNERS` file it depends on) is merged.
   - `Build WASM` (Smart Contract CI)
   - `Lint & Type Check` (Frontend CI)
   - `Build & Test` (Frontend CI)
-  - `Lint Repo / lint` (repo-lint: conflict-marker + actionlint check)
+  - `Lint Repo / lint` (repo-lint: conflict-marker, actionlint, workflow
+    permission and action-pin audit — issue #289)
 - Require at least 1 approving review.
 - Require review from Code Owners (see `/CODEOWNERS` — currently a single
   default owner; split by area once more maintainers are added).

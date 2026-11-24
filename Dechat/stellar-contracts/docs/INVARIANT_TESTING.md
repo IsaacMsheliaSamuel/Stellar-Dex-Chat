@@ -43,6 +43,14 @@ state-changing entry point that touches token accounting:
 | 2 | `net_deposited = total_deposited - total_withdrawn` must be `>= total_liabilities` | `check_invariants` | `Error::InternalError` |
 | 3 | on-chain token balance `>= net_deposited` | `check_invariants` | `Error::InsufficientFunds` |
 
+`get_token_escrow_accounting(token)` adds a per-token audit decomposition:
+`token_balance = user_assets + fee_liability + unassigned_dust`. The pending
+withdrawal amount is a subset of user assets. Fee rounding is tracked
+separately as a per-token numerator over 10,000; it is a fractional smallest
+unit, not an extra token unit in the balance equation. The view returns an
+error instead of a negative dust value when the tracked obligations are
+underfunded.
+
 ### 1. `total_deposited >= total_withdrawn`
 
 The contract can never withdraw more than has been deposited across its whole

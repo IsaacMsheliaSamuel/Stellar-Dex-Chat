@@ -32,6 +32,36 @@ To update a pinned version, change the manifest (and `rust-toolchain.toml` for
 Rust components) in a dedicated pull request and regenerate the bindings as
 described below.
 
+## Workflow permissions and action pinning
+
+GitHub Actions workflows follow the same pinning discipline as the build
+toolchain (issue #289):
+
+- Every workflow declares an explicit, read-only top-level `permissions` block.
+  Jobs that truly need a write scope declare it at **job level** only, and that
+  scope must be listed for the exact `workflow::job` in
+  `.github/workflow-policy.json`.
+- Every third-party `uses:` reference is pinned to a 40-character commit SHA.
+  A mutable tag or branch (`@v4`, `@stable`, `@main`) is not accepted, even on a
+  trusted publisher. `docker://` images must use a `@sha256:` digest. Local
+  reusable workflows (`./.github/workflows/...`) are exempt.
+- The trailing `# vX.Y.Z` comment is informational: the SHA is authoritative.
+  Keep the comment accurate when you bump a pin.
+
+Run the audit and its focused tests locally before opening a pull request:
+
+```sh
+python3 tools/workflow_guard.py
+python3 -m unittest discover -s tools/tests -p 'test_workflow_guard.py' -v
+```
+
+Both commands are dependency-free and run inside the `Lint Repo / lint` CI
+check. If you add a job that needs a new write scope, add the smallest possible
+entry to `.github/workflow-policy.json` in the same pull request and explain why
+it is required. See [docs/operations/workflow-security.md](docs/operations/workflow-security.md)
+for the full policy and the recovery procedure for a rejected pin or privilege
+change.
+
 ## Prerequisites
 
 Before running any validation command, make sure the following tools are installed and available on your `PATH`:
@@ -103,6 +133,18 @@ To run only the API contract tests locally:
 npm run test:api-contract
 ```
 
+## Cross-version contract ABI checks
+
+The frontend checks committed TypeScript contract bindings against the current Soroban spec and every supported release snapshot. This catches stale method lists, changed signatures, renamed error codes, and DTO field drift before merge.
+
+```sh
+cd Dechat/dex_with_fiat_frontend
+pnpm contract:abi:check
+pnpm exec vitest run src/contracts/__tests__/abiCompatibility.test.ts
+```
+
+The release list lives in `src/contracts/abi/specs/manifest.json`. The `current` release must match the bindings exactly. Supported older releases may be a subset of the current client, but any method, signature, error code, or field they require must still be present. When a contract build is available, capture a fresh spec with `pnpm contract:abi:capture --release current --status current --wasm <path-to.wasm> --output src/contracts/abi/specs/current.json`.
+
 ## Cross-browser wallet and transaction UX smoke suite
 
 The `full` mode runs a focused Playwright suite across **Chromium, Firefox, and WebKit**. It covers wallet connection, signature rejection, pending transaction recovery, and payout status. Browser-specific wallet mocks are isolated per browser project so a mock for one engine cannot mask a failure in another.
@@ -165,7 +207,7 @@ fail if required items are left unchecked when the corresponding paths change.
 
 ### Contract / ABI changes
 
-- [ ] Contract interface changes include regenerated bindings.
+- [ ] Contract interface changes include regenerated bindings and a passing `pnpm contract:abi:check`.
 - [ ] The CI drift check passes with no ABI diff.
 - [ ] Breaking changes are documented and versioned as described above.
 - [ ] Regeneration left unrelated files unchanged.

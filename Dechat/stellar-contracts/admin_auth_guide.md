@@ -29,13 +29,24 @@ Even if a malicious user bypasses the frontend UI checks, they cannot execute ad
 | Set Asset Limits | Admin | `set_limit()` |
 | Deny Addresses | Admin | `deny_address()` |
 | Transfer Ownership| Admin | `transfer_admin()` |
-| Emergency Recovery| Recovery Address | `emergency_recovery()` |
+| Admin Recovery | Recovery Address proposes; successor authorizes | `propose_admin_recovery()`, `execute_admin_recovery()` |
 
 ## Best Practices for Administrators
 
 1. **Hardware Wallet**: Always use a hardware wallet (like Ledger) for the primary Admin address.
 2. **Operator Role**: For day-to-day tasks like heartbeat signals, use the **Operator** role. Operators have restricted permissions and can be pruned by the Admin if compromised.
 3. **Multisig Control**: The contract supports M-of-N multi-signature control for critical governance actions. Ensure the threshold is set to a value that balances security and availability (e.g., 3-of-5).
+
+## Lost-Admin Recovery
+
+The admin must configure an independent recovery address with
+`set_emergency_recovery` while the admin key is available. That recovery
+address can propose a successor only after `InactivityThreshold` ledgers have
+passed without admin activity. The successor must separately authorize
+`execute_admin_recovery`, and execution is blocked until the 48-hour timelock
+has elapsed. Any intervening action authenticated as the current admin clears
+the recovery proposal. Proposal and execution events provide an on-chain audit
+trail. The ordinary `transfer_admin` / `accept_admin` flow remains unchanged.
 
 ## Verification
 You can verify the current admin at any time using a Stellar explorer (like StellarExpert) by querying the `FiatBridge` contract instance storage for the `Admin` key.

@@ -1,6 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useId, useMemo } from 'react';
+import { usePayoutStatusAnnouncements } from '@/hooks/usePayoutStatusAnnouncements';
+import { mapPayoutLifecycleStatus } from '@/lib/payoutStatusAnnouncements';
 import {
   CheckCircle,
   Clock,
@@ -164,47 +166,75 @@ export default function TransferTimeline({
   isLoading = false,
   stages,
   state,
+  isStale = false,
 }: TransferTimelineProps) {
   const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const { isRtl, dir } = useRtlDirection();
+
+  const effectiveEvents = state?.events ?? events;
+  const effectiveStages = state?.stages ?? stages;
+  const latestEvent = effectiveEvents[effectiveEvents.length - 1];
+  const historyHelpId = useId();
+
+  // A stale projection is itself an announcement state, but never overrides a
+  // terminal lifecycle status (settled / failed / reversed / cancelled).
+  const lifecycleStatus = latestEvent?.status ?? state?.overallStatus ?? null;
+  const announcementStatus = useMemo(
+    () => mapPayoutLifecycleStatus(lifecycleStatus, isStale),
+    [lifecycleStatus, isStale],
+  );
+  const { announcement, current, history } = usePayoutStatusAnnouncements({
+    reference: state?.transferReference ?? '',
+    status: announcementStatus,
+    at: latestEvent?.timestamp,
+    enabled: !isLoading,
+  });
 
   if (isLoading) {
     return <SkeletonTimeline />;
   }
 
-  const effectiveEvents = state?.events ?? events;
-  const effectiveStages = state?.stages ?? stages;
-
   if (effectiveEvents.length === 0 && !effectiveStages) {
     return (
-      <p className="theme-text-muted text-xs text-center py-4">
-        No status events yet.
-      </p>
+      <>
+        {/* Still announce stale data when the projection has no events yet. */}
+        <div
+          data-testid="payout-status-live-region"
+          aria-live="polite"
+          aria-atomic="true"
+          className="sr-only"
+          role="status"
+        >
+          {announcement}
+        </div>
+        <p className="theme-text-muted text-xs text-center py-4">
+          No status events yet.
+        </p>
+      </>
     );
   }
 
-  const currentEvent = effectiveEvents[effectiveEvents.length - 1];
-  const currentMeta = currentEvent
-    ? (STATUS_META[currentEvent.status] ?? STATUS_META.pending)
-    : STATUS_META.pending;
-
-  const accessibleAnnouncement =
-    state?.announcement ||
-    (currentEvent
-      ? `${currentMeta.label}. ${currentEvent.label ?? currentMeta.defaultLabel}`
-      : 'Transfer in progress');
-
   return (
     <div className="relative space-y-4" aria-label="Transfer status timeline" dir={dir}>
-      {/* Accessibility: Live region to announce status changes */}
+      {/* One live region only; duplicate polls never re-announce the same state. */}
       <div
-        aria-live="polite"
+        data-testid="payout-status-live-region"
+        role={current?.status === 'failed' ? 'alert' : 'status'}
+        aria-live={current?.status === 'failed' ? 'assertive' : 'polite'}
         aria-atomic="true"
         className="sr-only"
-        role="status"
       >
-        {accessibleAnnouncement}
+        {announcement}
       </div>
+
+      {announcementStatus === 'stale' && (
+        <p
+          data-testid="payout-status-stale"
+          className="text-xs text-amber-700 dark:text-amber-300"
+        >
+          Payout status is out of date. Refresh before acting.
+        </p>
+      )}
 
       {/* Linked Stages Display (if stages are provided) */}
       {effectiveStages && (
@@ -275,7 +305,17 @@ export default function TransferTimeline({
           aria-hidden="true"
         />
 
-        <ol className="space-y-4">
+        <p id={historyHelpId} className="sr-only">
+          Payout status history is not announced automatically. Review it at your own pace.
+        </p>
+        <ol
+          data-testid="payout-status-history"
+          data-announcement-count={history.length}
+          aria-label="Payout status history"
+          aria-describedby={historyHelpId}
+          aria-live="off"
+          className="space-y-4"
+        >
           {effectiveEvents.map((event, idx) => {
             const meta = STATUS_META[event.status] ?? STATUS_META.pending;
             const isLast = idx === effectiveEvents.length - 1;

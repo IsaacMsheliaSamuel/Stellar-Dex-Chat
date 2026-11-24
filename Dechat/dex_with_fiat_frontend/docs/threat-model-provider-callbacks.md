@@ -145,23 +145,50 @@ Each high-risk scenario is mapped to a preventive control and the regression tes
 | # | Abuse case | Preventive control | Regression test |
 | --- | --- | --- | --- |
 | 6.1 | Replay | Timestamp window + dedupe | `test_webhook_replay_rejected` |
-| 6.2 | Forged signature | HMAC + constant-time compare | `test_webhook_forged_signature_rejected` |
+| 6.2 | Forged signature | HMAC verify, constant-time | `test_webhook_forged_signature_rejected` |
 | 6.3 | Stale signature | Clock-skew tolerance | `test_webhook_stale_timestamp_rejected` |
-| 6.4 | Out-of-order status | State-transition table | `test_reconciliation_rejects_invalid_transition` |
-| 6.5 | Duplicate event | Dedupe store | `test_webhook_duplicate_event_idempotent` |
-| 6.6 | Unauthorized retry | Admin authz | `test_admin_retry_requires_admin_role` |
-| 6.7 | Cross-owner read | Owner-scoped queries | `test_reconciliation_cross_owner_denied` |
-| 6.8 | Amount tampering | Intent validation | `test_reconciliation_amount_mismatch_rejected` |
+| 6.4 | Out-of-order transition | State-transition table | `test_reconciliation_rejects_invalid_transition` |
+| 6.5 | Duplicate event | Durable dedupe store | `test_webhook_duplicate_event_idempotent` |
+| 6.6 | Unauthorized admin retry | AuthN + role AuthZ | `test_admin_retry_requires_admin_role` |
+| 6.7 | Cross-owner read | Owner-scoped queries, 404 | `test_reconciliation_cross_owner_denied` |
+| 6.8 | Amount tampering | Intent amount validation | `test_reconciliation_amount_mismatch_rejected` |
 
-## 8. Operational Notes
+## 8. Wallet Permission Trust Boundary (Least-Privilege Signing)
 
-- Rotate `HMAC_SECRET` via the secret manager; the provider must support overlapping secrets during rotation.
-- Monitor rejected webhooks (signature, timestamp, dedupe) as a security signal.
-- Admin retry/reconciliation actions are always audited with `actor=admin:<id>` and a reason string.
-- Dedupe store retention must exceed the provider's maximum retry window.
+This section covers the client-side wallet boundary that fronts the fiat flows above. It is included here because a wallet session that over-requests permissions or half-authenticates can bypass the intent validation described in §6.
 
-## 9. References
+### 8.1 Principle
 
-- Contributor guide: `CONTRIBUTING.md` — see "Security-sensitive changes" for review requirements.
-- Operational runbook: `docs/operations/provider-callbacks.md` — incident response for callback failures.
-- Ledger threat model: `docs/threat-model-ledger.md`.
+Each user action requests **only** the wallet capability it needs, at the moment it needs it:
+
+| Action | Wallet capability requested | Never requested here |
+| --- | --- | --- |
+| View balances / history | Read-only account access (`eth_requestAccounts` / `wallet_getPermissions`) | Signing, transaction approval |
+| Connect wallet (session start) | Account access only | Message signing, tx signing |
+| Sign-in / auth challenge | Message signing (`personal_sign` / `eth_signTypedData_v4`) | Transaction signing |
+| Submit on-ramp / off-ramp order | Transaction signing for the specific tx | Blanket account re-approval |
+
+A blanket "connect + sign" flow is explicitly disallowed: connecting must not imply signing, and signing must not silently re-request accounts.
+
+### 8.2 Prompt explanation
+
+Before each request the UI states what is being asked and why (e.g. "Your wallet will ask you to sign a message to prove ownership — this does not move funds"). The prompt copy is shown at the point of request, not only at connect time.
+
+### 8.3 Denial handling
+
+- A denied permission or signature request leaves **no partially authenticated session**: the app does not mark the user as connected/signed-in, does not persist a session token, and clears any pending intent.
+- The UI returns to a recoverable state (retry button, unchanged balances) and surfaces a non-blocking message explaining the denial.
+- Denial is treated as a normal outcome, not an error that mutates financial state; no order is created and no ledger entry is written.
+
+### 8.4 Abuse cases and controls
+
+| # | Abuse case | Preventive control | Regression test |
+| --- | --- | --- | --- |
+| 8.4.1 | Over-broad permission request on connect | Connect requests account access only; signing requested per-action | `test_connect_requests_accounts_only` |
+| 8.4.2 | Signing requested without user intent | Signing only triggered by explicit action; prompt explains scope | `test_sign_prompt_explains_scope` |
+| 8.4.3 | Denied signature leaves half-auth session | Denial clears pending intent and session state | `test_denied_signature_no_partial_session` |
+| 8.4.4 | Denied account access leaves stale connected state | Denial resets connected state to disconnected | `test_denied_accounts_resets_connection` |
+
+### 8.5 Compatibility note
+
+This is an intentional behavior change: previously a single connect flow also requested signing. Now signing is requested per action. Integrators relying on the old combined prompt must request signing explicitly at the action site. No financial safety property changes — intent validation (§6.8) and state transitions (§6.4) are unchanged.

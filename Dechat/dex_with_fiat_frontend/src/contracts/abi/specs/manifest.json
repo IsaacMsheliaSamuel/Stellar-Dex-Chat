@@ -1,0 +1,18 @@
+{
+  "format": "contract-abi-manifest-v1",
+  "currentRelease": "current",
+  "releases": [
+    {
+      "id": "current",
+      "status": "current",
+      "label": "Current built FiatBridge contract",
+      "spec": "./current.json"
+    },
+    {
+      "id": "v1-baseline",
+      "status": "supported",
+      "label": "Supported v1 contract baseline (7a12cf19)",
+      "spec": "./v1-baseline.json"
+    }
+  ]
+}

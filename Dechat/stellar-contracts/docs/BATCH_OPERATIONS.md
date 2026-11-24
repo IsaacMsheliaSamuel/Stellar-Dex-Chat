@@ -37,8 +37,8 @@ The `execute_batch_admin` function allows the contract admin to execute multiple
 
 - Reduces transaction count and associated fees
 - Executes operations in a defined order
-- Provides atomic visibility (all operations' state changes are applied before the transaction completes)
-- Maintains a detailed record of partial failures
+- Makes the entire batch atomic: any failed operation rolls back all earlier operations
+- Applies duplicate operations in their submitted order
 
 ### Function Signature
 
@@ -72,16 +72,16 @@ The function returns a detailed result struct:
 pub struct BatchResult {
     pub total_ops: u32,           // Total operations submitted
     pub success_count: u32,       // Number of successfully executed operations
-    pub failure_count: u32,       // Number of failed operations
-    pub failed_index: Option<u32>, // Index (0-based) of the FIRST failure, or None if all succeeded
+    pub failure_count: u32,       // Always 0 when a result is returned
+    pub failed_index: Option<u32>, // Always None when a result is returned
 }
 ```
 
 **Key properties:**
-- `success_count + failure_count == total_ops` (always)
-- `failed_index` points to the index of the **first** operation that failed
-- If `failure_count == 0`, then `failed_index == None`
-- If any operation fails, remaining operations still execute (no early abort)
+- A successful result has `success_count == total_ops`, `failure_count == 0`, and `failed_index == None`.
+- Any failed operation returns its original contract error; no `BatchResult` is returned.
+- Soroban transaction rollback discards all state changes and events from a failed batch.
+- Operations are evaluated sequentially, so repeated settings take the value from the last successful operation.
 
 ### Supported Operations
 
@@ -216,18 +216,8 @@ The batch execution follows these rules:
 
 1. **Authorization**: The caller must be the contract admin; `admin.require_auth()` is called
 2. **Sequential Processing**: Operations are processed in the order they appear in the vector
-3. **Non-Atomic with Respect to Failures**: 
-   - If operation N fails, operations N+1, N+2, ... are still executed
-   - Successfully executed operations' state changes persist even if a later operation fails
-   - This is **NOT** a transaction rollback scenario
-4. **Error Recording**: When an operation fails:
-   - The failure is recorded (failure_count incremented)
-   - `BatchFailEvent` is emitted with the operation index
-   - Execution continues
-5. **Multiple Failures**: If operations at indices 2, 5, and 7 fail:
-   - `failed_index == 2` (the **first** failure)
-   - `failed_index != 5` and `failed_index != 7` (only the first is recorded)
-   - All three failures are reflected in `failure_count`
+3. **Atomic Failure**: If any operation fails, its original error is returned immediately. Soroban rolls back all preceding writes and emitted events, and later operations are not executed.
+4. **Successful Result**: `BatchResult` is returned only after every operation succeeds.
 
 ### Example: Batch Configuration Update
 
@@ -292,18 +282,10 @@ ops.push_back(BatchAdminOp {
     payload: Bytes::from_array(&env, &3u32.to_be_bytes()),
 });
 
-let result = bridge.execute_batch_admin(&ops)?;
-
-// Result interpretation:
-// - result.total_ops == 3
-// - result.success_count == 2 (ops 0 and 2 succeeded)
-// - result.failure_count == 1 (op 1 failed)
-// - result.failed_index == Some(1) (op at index 1 failed first)
-//
-// Contract state will reflect:
-// - Cooldown period set to 100
-// - Lock period unchanged (op 1 failed)
-// - Anti-sandwich delay set to 3
+let result = bridge.try_execute_batch_admin(&ops);
+assert!(result.is_err());
+// The invalid operation returns its original error. No state changes from
+// this batch (including op 0) are committed, and op 2 is not executed.
 ```
 
 ---
@@ -503,21 +485,9 @@ pub struct BatchOkEvent {
 
 **Event Topics**: `(Symbol::short("batch_ok"), Symbol::short("v1"))`
 
-#### `BatchFailEvent` (Individual operation failure)
-
-Emitted **for each individual operation that fails** during batch execution.
-
-```rust
-pub struct BatchFailEvent {
-    pub version: u32,           // Event schema version (v1)
-    pub index: u32,             // 0-based index of the failed operation
-    pub total_ops: u32,         // Total operations in the batch
-}
-```
-
-**Event Topics**: `(Symbol::short("batch_fail"), Symbol::short("v1"))`
-
-**Note**: If a batch has 5 operations and ops 1, 3, and 4 fail, you'll see three `BatchFailEvent`s (one for each failure) plus one `BatchOkEvent` (at the end, now potentially misleading - consider using `failure_count` from `BatchResult` instead).
+Failed-batch events are rolled back with the transaction. The original contract
+error is the failure signal; `BatchOkEvent` is emitted only after all operations
+succeed.
 
 ### Migration Events
 
@@ -543,13 +513,13 @@ pub struct MigrationEvent {
 
 ### Batch Operation Errors
 
-Operations fail silently in terms of execution flow, but are recorded in the `BatchResult`. Important error scenarios:
+Operation errors abort the entire batch. Important error scenarios:
 
 | Condition | Handling | Result |
 |-----------|----------|--------|
-| Malformed payload (too short) | Operation fails | Counted in `failure_count` |
-| Unknown operation type | Operation fails | Counted in `failure_count` |
-| Other operation error | Operation fails | Counted in `failure_count` |
+| Malformed payload (too short) | Entire batch rolls back | Original decoding error |
+| Unknown operation type | Entire batch rolls back | `InternalError` |
+| Other operation error | Entire batch rolls back | Original operation error |
 | Unauthorized admin | Function returns error | Entire batch aborted |
 | Not initialized | Function returns error | Entire batch aborted |
 
@@ -574,14 +544,10 @@ Operations fail silently in terms of execution flow, but are recorded in the `Ba
    assert_eq!(cooldown_bytes.len(), 4, "Invalid cooldown payload");
    ```
 
-2. **Check Results**: Always inspect `BatchResult` for failures
+2. **Check Results**: A returned `BatchResult` means every operation succeeded; handle contract errors as failed batches
    ```rust
    let result = bridge.execute_batch_admin(&ops)?;
-   if result.failure_count > 0 {
-       eprintln!("Batch had {} failures; first at index {}", 
-           result.failure_count, 
-           result.failed_index.unwrap());
-   }
+   assert_eq!(result.failure_count, 0);
    ```
 
 3. **Order Operations Carefully**: Later operations depend on earlier state
@@ -592,7 +558,7 @@ Operations fail silently in terms of execution flow, but are recorded in the `Ba
    // This ensures consistent state throughout the batch
    ```
 
-4. **Monitor Events**: Use batch events to diagnose failures
+4. **Monitor Events**: `BatchOkEvent` indicates successful completion; failed transactions emit no lasting events
    ```
    // Query emitted events to determine:
    // - Which operations failed
@@ -683,10 +649,10 @@ Operations fail silently in terms of execution flow, but are recorded in the `Ba
 
 ## Summary
 
-- **Batch Admin Operations**: Efficiently execute multiple config changes; operations continue on failure
+- **Batch Admin Operations**: Execute ordered config changes atomically; any failure rolls back the entire batch
 - **Escrow Migration**: Safely migrate large datasets in resumable, paced batches
 - **Events**: Enable real-time monitoring and debugging
-- **Execution**: Non-atomic at the operation level but atomic at the transaction level
-- **Errors**: Recorded and reported, never cause silent failures
+- **Execution**: All-or-nothing at the transaction level
+- **Errors**: The original operation error aborts the batch; no partial success result is returned
 
 For further details, see [VERSION_MIGRATION.md](./VERSION_MIGRATION.md).

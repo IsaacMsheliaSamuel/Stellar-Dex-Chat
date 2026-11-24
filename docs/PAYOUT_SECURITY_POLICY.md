@@ -69,6 +69,7 @@ This document specifies the threat model, enforcement strategy, and cross-origin
    - The durable deduplication and event-order records use `PAYOUT_DATA_DIR` when configured. Deduplication records are retained for seven days by default, and abandoned in-flight processing locks expire after 30 seconds.
    - Provider event time and server receipt time are stored for each event. Events are ordered by provider time with stable status and event-ID tie-breakers, and the payout state is reconciled against that ordered history so delivery order does not determine the final state.
    - Terminal transitions are monotonic: delayed or contradictory events cannot downgrade a terminal payout state. Rejected events remain available for investigation.
+    - The accessibility announcement layer follows the same ordering rule: a repeated or out-of-order status poll cannot re-announce or downgrade a settled/failed payout, and stale read-model data is announced as provisional rather than confirmed settlement (Issue #291).
 
 ## 4. Payout Traceability and Settlement Estimates
 

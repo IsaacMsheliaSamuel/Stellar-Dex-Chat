@@ -61,6 +61,31 @@ cursor. For existing deployments, call
 `None`; each call scans at most 25 request IDs. Queue mutations return
 `QueueIndexMigrationRequired` until this backfill completes.
 
+New requests are bounded by `MAX_WITHDRAWAL_QUEUE_DEPTH` (100) active entries.
+A full queue returns `QueueLimitReached` before request IDs, rate-limit usage,
+or queue indexes are changed.
+
+## Oracle Availability and Token Retirement
+
+`get_oracle_health(token)` provides an O(1) diagnostic view that reports whether
+the configured observation is valid, missing, stale, future-dated, low
+confidence, or unavailable. The view and other non-price-sensitive reads remain
+available when the oracle is unhealthy. Deposits with a fiat cap or an expected
+price, and withdrawals with an expected price, use the timestamped
+`ObservationOracle` interface and fail closed with distinct oracle errors.
+Price-only oracle integrations must implement `get_observation` before being
+used for those operations.
+
+`set_token_deposits_enabled(token, false)` stops new deposits without blocking
+withdrawal requests or settlement for that asset.
+`get_token_retirement_readiness(token)` reports the bounded conditions for
+removal: deposits must be disabled, liabilities and net deposited value must
+both be zero, no fees may remain, escrow migration must be complete when there
+are receipts, the fee remainder must be zero, and the token cannot be the
+default asset. Removed token addresses cannot be registered again.
+`remove_token(token)` enforces those conditions and otherwise returns
+`TokenNotRetirable`.
+
 ## Scoped Emergency Pauses
 
 `set_pause_scope(scope, paused)` independently controls deposits, new withdrawal
@@ -72,41 +97,71 @@ solvency checks.
 
 ---
 
-## Circuit Breaker
+## Circuit Breaker and Oracle Recovery
 
-The FiatBridge uses a **global rolling withdrawal circuit breaker** as a last-resort safety stop for withdrawal flows.
+The FiatBridge combines a global rolling withdrawal breaker with a
+permissionless oracle-health trip.
 
-### What it watches
+### What it watches and blocks
 
-- Every `withdraw`, `request_withdrawal`, and `execute_withdrawal` call contributes to a shared rolling withdrawal total.
-- The total is tracked in `GlobalDailyWithdrawn { amount, window_start }`.
-- The default evaluation window is 24 hours (`WINDOW_LEDGERS`).
-
-### When it trips
-
-- Admin configures the breaker with `set_circuit_breaker_threshold(threshold)`.
-- A threshold of `0` disables the breaker entirely.
-- If a withdrawal would push the rolling total **above** the configured threshold, that withdrawal is rejected and the contract marks the breaker as tripped.
-- The contract emits `CircuitBreakerTrippedEvent { new_total, threshold }` and stores the trip ledger in `CircuitBreakerTrippedAt`.
-
-### What gets blocked
-
-While the breaker is active, the contract refuses high-sensitivity operations that would otherwise continue withdrawal processing, including:
-
-- `withdraw`
-- `request_withdrawal`
-- `execute_withdrawal`
-- `heartbeat`
-- `get_receipt_by_index`
-- selected admin mutations such as `set_limit`
+- Successful `withdraw` and `execute_withdrawal` calls contribute to the rolling
+  total in `GlobalDailyWithdrawn { amount, window_start }`. The default window
+  is 24 hours (`WINDOW_LEDGERS`).
+- Once a successful withdrawal brings the total to or above the configured
+  threshold, that transaction completes and the breaker trips. Subsequent
+  protected operations are rejected.
+- `check_oracle_health(token)` is permissionless and records an oracle-failure trip
+  when the versioned adapter cannot return a fresh, accepted aggregate. It
+  returns `false`, emits `OracleFailureTripEvent` with the oracle/token/ledger,
+  and moves no funds.
+- The breaker blocks `withdraw`, `request_withdrawal`, `execute_withdrawal`,
+  `heartbeat`, and selected admin changes such as `set_limit`. Read-only views
+  remain available; cancellations and emergency recovery keep their existing
+  independent authorization and solvency checks.
 
 ### How reset works
 
-- Admin can clear it manually with `reset_circuit_breaker()`.
-- Admin can configure auto-reset behavior with `set_circuit_breaker_reset_window(ledgers)`.
-- `0` means "use the default 48-hour window" (`CIRCUIT_BREAKER_RESET_LEDGERS`).
-- `u32::MAX` disables auto-reset entirely.
-- On auto-reset, the breaker clears and the rolling withdrawal window is restarted, and the contract emits `CircuitBreakerAutoResetEvent { tripped_at, reset_at }`.
+- Admin may clear a volume-only trip with `reset_circuit_breaker()`.
+- An oracle-failure trip can only be manually or automatically cleared after a
+  fresh, valid aggregate is available from the versioned adapter. Configure it
+  with `set_oracle_adapter`; legacy `set_oracle` sources are not recovery
+  evidence.
+- The reset window defaults to 48 hours; `u32::MAX` disables auto-reset.
+- Every reset restarts the rolling withdrawal window and emits the existing
+  reset event. Auto-reset of an oracle-failure trip also rechecks oracle health.
+
+## Versioned multi-source oracle adapter
+
+`OracleAdapter` accepts up to nine distinct source contracts implementing
+`VersionedOracleSource::get_observation`. Version 1 observations include a
+positive price, its decimal precision, recording ledger, and confidence. The
+adapter excludes stale, future-dated, low-confidence, and invalid observations;
+normalizes accepted prices to seven decimal places; requires the configured
+minimum source count; enforces the maximum spread in basis points; and returns
+the median using checked arithmetic. Unsupported source versions fail with a
+stable adapter error.
+
+`OracleAdapterConfig` consists of `max_age_ledgers`, `min_confidence`,
+`min_sources`, and `max_spread_bps`. Source lists are capped at nine distinct
+addresses. Use `init(admin, sources, config)` to create the adapter, then
+`set_sources` or `set_config` for authenticated updates. `get_aggregated_price`
+returns a typed adapter error; `get_price` is the `Option<i128>` compatibility
+interface.
+
+Use FiatBridge's `set_oracle_adapter` to preserve distinct errors for too few
+sources, excessive spread, and unsupported versions. The adapter's `get_price`
+method remains available for integrations using the compatibility interface.
+
+## Fiat-volume valuation policy
+
+Fiat-volume limits are charged at **deposit time**. Each deposit made while a
+fiat cap is enabled
+persists its token amount and precision, oracle address/adapter version,
+accepted price, calculated USD cents, ledger, active limits, rolling-window
+length, and before/after user/global totals under the receipt ID. Retrieve this
+immutable record with `get_receipt_fiat_valuation`. Later price or limit changes
+cannot retroactively change the cap decision. Failed transfers and balance
+checks roll back the volume update and valuation record atomically.
 
 ### Operational guidance
 
@@ -120,6 +175,45 @@ Admin privileges in the FiatBridge are strictly tied to the on-chain state. The 
 1. **Root of Trust**: The admin address is established during `init` and stored directly in the contract's instance storage (`DataKey::Admin`).
 2. **Authorization**: Any administrative operation (e.g., `withdraw`, `set_limit`) requires a cryptographic signature matching the stored admin address. This is enforced by `require_auth` at the Soroban SDK level.
 3. **Frontend Integration**: The Next.js frontend fetches the true admin address by calling `get_admin()` directly on the smart contract before displaying admin UI components or authorizing admin routes. 
+
+---
+
+## Recovery, History, and Token Accounting
+
+### Delayed Admin Recovery
+
+Configure an independent recovery address using `set_emergency_recovery` before
+the admin key is lost. After the configured inactivity threshold, the recovery
+address calls `propose_admin_recovery(successor)`. The proposed successor must
+authorize `execute_admin_recovery()` after the 48-hour timelock. Any intervening
+admin-authenticated action invalidates the proposal. `AdminRecoveryProposedEvent`
+and `AdminRecoveryExecutedEvent` record the proposal and completed transfer.
+This recovery path does not change the standard `transfer_admin` /
+`accept_admin` flow.
+
+### Historical Pagination
+
+`get_receipts_page_after(after_cursor, limit)` and
+`get_completed_withdrawals_page(after_cursor, limit)` use exclusive cursors:
+pass `None` for the first page, then pass the returned `next_cursor` to continue.
+The cursor represents the last sequence/request ID examined. Each call examines
+at most `limit` IDs (`1..=MAX_AUDIT_PAGE_SIZE`); pruned or unavailable records
+are skipped while the cursor still advances, preventing gaps from causing an
+unbounded scan.
+
+### Per-Token Escrow Accounting
+
+`get_token_escrow_accounting(token)` reports the token balance decomposition:
+
+`token_balance = user_assets + fee_liability + unassigned_dust`
+
+`pending_withdrawal_liability` is a subset of `user_assets`. Deposits,
+withdrawals, and partial withdrawals are accounted in the token's smallest
+unit, so partial transfers introduce no additional rounding. Fee rounding
+residue is retained per token as a numerator over 10,000 in `FeeRemainder`;
+it becomes a whole smallest unit only when later deposits complete the
+fraction. The view reports token precision and fails if liabilities are
+underfunded rather than returning a misleading decomposition.
 
 ---
 
@@ -143,8 +237,19 @@ All errors are returned as `Result<_, Error>` variants. The contract uses a flat
 | 11 | `DailyLimitExceeded` | Rate Limiting | User's per-token daily deposit accumulator has exceeded the configured limit | `deposit` (via `enforce_daily_deposit_limit`) |
 | 12 | `CooldownActive` | Rate Limiting | User deposited too recently; cooldown period has not elapsed | `deposit` |
 | 13 | `NotAllowed` | Access Control | Allowlist is enabled and caller is not on it | `deposit` |
-| 14 | `OracleNotSet` | Oracle | Oracle address is not configured, or oracle returned a non-positive price | `deposit` (via `validate_fiat_limit`) |
-| 15 | `ExceedsFiatLimit` | Oracle | Deposit would push user's 24-hour USD volume above the fiat cap | `deposit` (via `validate_fiat_limit`) |
+| 305 | `ExceedsFiatLimit` | Oracle | Deposit would push user's rolling USD-cent volume above the fiat cap | `deposit` (via `validate_fiat_limit`) |
+| 405 | `TokenInterfaceInvalid` | Token | Required token balance or decimal query failed or returned unsupported precision | Token interaction |
+| 701 | `OracleNotSet` | Oracle | Oracle address is not configured | `deposit` (via `validate_fiat_limit`) |
+| 702 | `OraclePriceInvalid` | Oracle | Oracle returned a non-positive price | `deposit` (via `validate_fiat_limit`) |
+| 705 | `OracleObservationMissing` | Oracle | No usable oracle observation was returned | `deposit` |
+| 706 | `OracleObservationStale` | Oracle | Oracle observation exceeds the configured age | Oracle validation |
+| 707 | `OracleObservationFutureDated` | Oracle | Oracle observation is dated after the current ledger | Oracle validation |
+| 708 | `OracleConfidenceTooLow` | Oracle | Oracle observation confidence is below the configured threshold | Oracle validation |
+| 709 | `OracleConfigInvalid` | Oracle | Oracle configuration is invalid or an adapter is required for health recovery | Oracle configuration |
+| 710 | `FiatConversionOverflow` | Oracle | Fiat conversion exceeded safe integer arithmetic bounds | `deposit` |
+| 711 | `OracleSpreadTooWide` | Oracle | Accepted source prices exceed the configured spread | `deposit` with adapter configured |
+| 712 | `OracleSourcesInsufficient` | Oracle | Fewer than the configured minimum number of valid sources responded | `deposit` with adapter configured |
+| 713 | `OracleVersionUnsupported` | Oracle | A configured source returned an unsupported observation version | `deposit` with adapter configured |
 | 16 | `NoPendingAdmin` | Admin Transfer | `accept_admin` called but no pending admin was set | `accept_admin` |
 | 17 | `ActionNotReady` | Timelock | Timelock delay is less than `MIN_TIMELOCK_DELAY`, or execution attempted before `target_ledger` | `queue_admin_action`, `execute_admin_action` |
 | 18 | `ActionNotQueued` | Timelock | No queued admin action exists for the given ID | `execute_admin_action` |
@@ -209,6 +314,10 @@ A GitHub Actions step validates that the error table stays in sync with the cont
 | `set_pause_scope(scope, paused)` | admin | Pause one value-moving path |
 | `get_pause_state()` | — | Read global and scoped pause flags |
 | `migrate_withdrawal_queue_index(cursor, limit)` | admin | Backfill the bounded pending queue index |
+| `set_token_deposits_enabled(token, enabled)` | admin | Enable or disable new deposits without blocking settlement |
+| `get_token_retirement_readiness(token)` | — | Read constant-time retirement preconditions |
+| `remove_token(token)` | admin | Remove a fully settled, migrated, non-default token |
+| `get_oracle_health(token)` | — | Read bounded oracle availability and freshness diagnostics |
 | `set_limit(token, limit)` | admin | Update per-token deposit limit |
 | `set_limit_max_cap(max_cap)` | admin | Set the global ceiling for future per-token liability limits |
 | `get_set_limit_max_cap()` | — | Read the current global per-token limit ceiling |
@@ -216,10 +325,19 @@ A GitHub Actions step validates that the error table stays in sync with the cont
 | `set_cooldown(ledgers)` | admin | Set per-user deposit cooldown |
 | `transfer_admin(new_admin)` | admin | Initiate two-step admin transfer |
 | `accept_admin()` | pending admin | Complete admin transfer |
+| `set_emergency_recovery(recovery, cap)` | admin | Configure the independent recovery address and transfer cap |
+| `propose_admin_recovery(successor)` | configured recovery address | Propose successor after admin inactivity |
+| `execute_admin_recovery()` | proposed successor | Complete recovery after delay and explicit authorization |
+| `get_admin_recovery_proposal()` | — | Read the pending recovery proposal |
+| `get_receipts_page_after(after_cursor, limit)` | — | Read receipt history using bounded exclusive-cursor pages |
+| `get_completed_withdrawals_page(after_cursor, limit)` | — | Read settled withdrawals using bounded exclusive-cursor pages |
+| `get_token_escrow_accounting(token)` | — | Verify the per-token user/fee/dust balance decomposition |
 | `set_operator(operator, active)` | admin | Grant or revoke operator role (with timelock role check) |
 | `queue_renounce_admin()` | admin | Queue irreversible admin renounce under timelock |
 | `execute_renounce_admin()` | admin | Complete admin renounce after timelock elapses |
 | `set_oracle(oracle)` | admin | Set oracle contract address |
+| `set_oracle_adapter(oracle)` | admin | Set a versioned multi-source oracle adapter |
+| `check_oracle_health(token)` | — | Trip the breaker if the versioned adapter has no healthy price for the token |
 | `set_fiat_limit(limit_usd_cents)` | admin | Set daily USD fiat limit |
 | `queue_admin_action(type, payload, delay)` | admin | Queue a timelocked admin action |
 | `execute_admin_action(id)` | admin | Execute a matured admin action |
@@ -227,6 +345,7 @@ A GitHub Actions step validates that the error table stays in sync with the cont
 | `add_token_allowlist(token, address)` | admin | Add address to token-specific allowlist |
 | `remove_token_allowlist(token, address)` | admin | Remove address from token-specific allowlist |
 | `get_daily_deposit_record(user)` | — | Get 24h fiat deposit volume for a user |
+| `get_receipt_fiat_valuation(receipt_id)` | — | Read the immutable deposit-time fiat valuation record |
 
 ---
 

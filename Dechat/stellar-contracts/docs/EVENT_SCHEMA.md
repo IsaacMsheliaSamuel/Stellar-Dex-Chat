@@ -76,6 +76,8 @@ Events communicate completed on-chain facts. To prevent indexers from recording 
 | **PausedEvent** | `#[contractevent]` | `[Symbol("PausedEvent")]` | `{ version: u32, by: Address }` | `pause` |
 | **UnpausedEvent** | `#[contractevent]` | `[Symbol("UnpausedEvent")]` | `{ version: u32, by: Address }` | `unpause` |
 | **AdminTransferEvent** | `#[contractevent]` | `[Symbol("AdminTransferEvent")]` | `{ version: u32, old_admin: Address, new_admin: Address }` | `transfer_admin`, `accept_admin` |
+| **AdminRecoveryProposedEvent** | `#[contractevent]` | `[Symbol("AdminRecoveryProposedEvent")]` | `{ version: u32, previous_admin: Address, successor: Address, recovery: Address, proposed_at: u32, execute_after: u32 }` | `propose_admin_recovery` |
+| **AdminRecoveryExecutedEvent** | `#[contractevent]` | `[Symbol("AdminRecoveryExecutedEvent")]` | `{ version: u32, previous_admin: Address, successor: Address, recovery: Address }` | `execute_admin_recovery` |
 | **SetMinDepositEvent** | `#[contractevent]` | `[Symbol("SetMinDepositEvent")]` | `{ version: u32, min: i128 }` | `set_min_deposit` |
 | **SetLimitEvent** | `#[contractevent]` | `[Symbol("SetLimitEvent")]` | `{ version: u32, token: Address, limit: i128, by: Address, ledger: u32 }` | `set_limit` |
 | **SetOperatorEvent** | `#[contractevent]` | `[Symbol("SetOperatorEvent")]` | `{ version: u32, operator: Address, active: bool, previous_active: bool, operator_count: u32, by: Address, ledger: u32 }` | `set_operator` |

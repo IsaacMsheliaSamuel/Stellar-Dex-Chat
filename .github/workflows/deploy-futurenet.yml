@@ -10,13 +10,16 @@ on:
 
 permissions:
   contents: read
-  deployments: write
 
 jobs:
   deploy:
     name: Deploy to Futurenet
     runs-on: ubuntu-latest
     environment: futurenet
+    # Only the deployment job creates GitHub Deployment records.
+    permissions:
+      contents: read
+      deployments: write
     
     defaults:
       run:
@@ -318,10 +321,13 @@ jobs:
     name: Verify release SBOM and provenance
     needs: deploy
     runs-on: ubuntu-latest
+    # Read-only verification: no deployment write scope is inherited.
+    permissions:
+      contents: read
 
     steps:
       - name: Download SBOM and provenance artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-sbom-${{ github.sha }}
           path: release-sbom

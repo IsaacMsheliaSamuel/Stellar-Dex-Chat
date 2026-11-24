@@ -220,8 +220,8 @@ pub const MAX_DECIMALS: u32 = 18;
 /// # Formula
 /// Let `token_scale = 10^token_decimals` and `oracle_scale = 10^oracle_decimals`.
 /// The result is the mathematical floor:
-/// $$\left\lfloor \frac{\text{amount} \times \text{oracle\_price} \times 10^{\text{oracle\_decimals}}}
-///   {10^{\text{token\_decimals}}} \right\rfloor$$
+/// $$\left\lfloor \frac{\text{amount} \times \text{oracle\_price} \times \text{oracle\_scale}}
+///   {\text{token\_scale} \times \text{FIXED\_POINT}} \right\rfloor$$
 ///
 /// The returned value is expressed in the oracle's fixed-point scale
 /// (i.e. `oracle_scale` units per whole fiat unit), so a price of `1.0` with
@@ -280,12 +280,15 @@ pub fn convert_token_to_fiat(
         .checked_pow(oracle_decimals)
         .ok_or(Error::Overflow)?;
 
-    // amount * oracle_price * oracle_scale / token_scale, computed as
-    // (amount * oracle_price) * oracle_scale / token_scale with checked steps.
+    // Keep the historical 7-decimal price unit while allowing callers to
+    // select the output precision through `oracle_decimals`.
     let scaled_price = oracle_price
         .checked_mul(oracle_scale)
         .ok_or(Error::Overflow)?;
-    checked_mul_div_floor(amount, scaled_price, token_scale)
+    let denominator = token_scale
+        .checked_mul(FIXED_POINT)
+        .ok_or(Error::Overflow)?;
+    checked_mul_div_floor(amount, scaled_price, denominator)
 }
 
 #[cfg(test)]

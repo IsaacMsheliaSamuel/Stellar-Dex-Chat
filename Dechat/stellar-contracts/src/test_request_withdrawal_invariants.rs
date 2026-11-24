@@ -38,7 +38,7 @@
 //! See [`docs/INVARIANT_TESTING.md`](docs/INVARIANT_TESTING.md) for the
 //! invariant-testing strategy and contributor checklist.
 
-use crate::{Error, FiatBridge, FiatBridgeClient};
+use crate::{Error, FiatBridge, FiatBridgeClient, MAX_WITHDRAWAL_QUEUE_DEPTH};
 use proptest::prelude::*;
 use soroban_sdk::{testutils::Address as _, token, Address, Bytes, BytesN, Env, Vec};
 
@@ -644,4 +644,36 @@ proptest! {
         prop_assert_eq!(stored.unlock_ledger, queued_at + lock);
         prop_assert!(stored.unlock_ledger >= stored.queued_ledger);
     }
+}
+
+#[test]
+fn queue_depth_limit_rejects_without_allocating_or_mutating_queue_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let fx = setup_bridge(&env);
+    let user = funded_user(&env, &fx, MAX_WITHDRAWAL_QUEUE_DEPTH as i128);
+    for _ in 0..MAX_WITHDRAWAL_QUEUE_DEPTH {
+        fx.bridge
+            .request_withdrawal(&user, &1, &fx.token_addr, &None, &0);
+    }
+
+    let before = fingerprint(&fx);
+    assert_eq!(
+        fx.bridge.try_request_withdrawal(&user, &1, &fx.token_addr, &None, &0),
+        Err(Ok(Error::QueueLimitReached))
+    );
+    assert_eq!(before, fingerprint(&fx));
+    assert_eq!(
+        fx.bridge
+            .get_withdrawal_request(&MAX_WITHDRAWAL_QUEUE_DEPTH),
+        None
+    );
+
+    fx.bridge.cancel_withdrawal(&0);
+    assert_eq!(
+        fx.bridge
+            .request_withdrawal(&user, &1, &fx.token_addr, &None, &0),
+        MAX_WITHDRAWAL_QUEUE_DEPTH
+    );
 }

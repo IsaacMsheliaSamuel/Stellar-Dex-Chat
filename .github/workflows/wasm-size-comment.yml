@@ -12,13 +12,16 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   comment:
     name: Post size comment
     runs-on: ubuntu-latest
     if: github.event.workflow_run.event == 'pull_request'
+    # Only the comment step needs write access to pull requests.
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - name: Download size report artifact

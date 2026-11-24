@@ -63,7 +63,7 @@ fn test_set_migration_cursor_rejects_i128_max() {
 }
 
 #[test]
-fn test_set_migration_cursor_accepts_valid_value() {
+fn test_set_migration_cursor_rejects_cursor_beyond_receipt_counter() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -76,13 +76,15 @@ fn test_set_migration_cursor_accepts_valid_value() {
 
     bridge.init(&admin, &token, &1_000_000, &1, &signers, &1);
 
-    // Should accept valid cursor value
-    bridge.set_migration_cursor(&100);
-    assert_eq!(bridge.get_migration_cursor(), 100);
+    assert_eq!(
+        bridge.try_set_migration_cursor(&100),
+        Err(Ok(Error::MigrationInvalidState))
+    );
+    assert_eq!(bridge.get_migration_cursor(), 0);
 }
 
 #[test]
-fn test_set_migration_cursor_fence_post() {
+fn test_set_migration_cursor_rejects_unmigrated_receipt() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -95,9 +97,11 @@ fn test_set_migration_cursor_fence_post() {
 
     bridge.init(&admin, &token, &1_000_000, &1, &signers, &1);
 
-    // Test fence post: exactly at boundary (1 should be accepted)
-    bridge.set_migration_cursor(&1);
-    assert_eq!(bridge.get_migration_cursor(), 1);
+    assert_eq!(
+        bridge.try_set_migration_cursor(&1),
+        Err(Ok(Error::MigrationInvalidState))
+    );
+    assert_eq!(bridge.get_migration_cursor(), 0);
 }
 
 #[test]

@@ -469,6 +469,9 @@ Repo Avatar
 - **fixtures:** Deterministic full-stack fixture with seeded ledger history
 - Add staged contract deployment with preflight and post-deploy verification
 - **reconciliation:** Add read-only escrow liability parity checks
+- **frontend:** Add cross-version ABI compatibility checks
+- **a11y:** Announce asynchronous payout transitions once
+- **frontend:** Enforce critical financial coverage thresholds
 
 ### Fixed
 
@@ -991,6 +994,18 @@ Repo Avatar
 - #222 Introduce a transactional outbox for payout side effects
 - #223 Define a provider capability contract for reversals and recall
 - #224 Add a first-class payout reversal and dispute lifecycle
+- #194 Implement wallet-session revocation and logout cleanup
+- #195 Request least-privilege wallet permissions for each action
+- #196 Revalidate wallet account and chain immediately before submiss
+- #197 Model transaction recovery as a persisted typed state machine
+- #187 Add storage TTL and rent-budget regression coverage
+- #189 Publish a machine-readable contract deployment manifest
+- #190 Add deterministic event compatibility fixtures for every mutat
+- #191 Build an operator simulation for emergency pause and recovery
+- **contracts:** Resolve issues 176 through 179
+- **a11y:** Complete transaction confirmation WCAG 2.2 AA flow
+- #192 Show a decoded transaction effects diff before wallet signing
+- #193 Replace scattered network constants with validated network pro
 
 ### Changed
 
@@ -1352,6 +1367,14 @@ Repo Avatar
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
+- Enforce least-privilege workflow permissions and pinned actions
+- **changelog:** Update changelog [skip ci]
+- **deps:** Bump the actions group with 2 updates
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
@@ -1923,3 +1946,6 @@ feat(api): circuit breaker, race-safe recipients, reconciliation, and security h
 - Merge pull request #311 from jolesonbethany1-dev/fix/265-release-secret-policy
 
 feat(security): release-time secret scanning with expiring exceptions
+- Merge pull request #350 from MsseliaSamuel/security/issue-289-workflow-least-privilege
+
+ci: enforce least-privilege workflow permissions and pinned actions

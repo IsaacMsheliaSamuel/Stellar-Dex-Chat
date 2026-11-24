@@ -231,9 +231,10 @@ fn test_unsupported_version_rejection() {
 
     assert_eq!(bridge.get_escrow_storage_version(), 999);
 
-    // Migration must reject if storage version is already at or beyond current supported version
+    // Migration must reject a future schema version without overwriting it.
     let result = bridge.try_migrate_escrow(&10);
-    assert_eq!(result, Err(Ok(crate::Error::MigrationAlreadyComplete)));
+    assert_eq!(result, Err(Ok(crate::Error::MigrationSchemaMismatch)));
+    assert_eq!(bridge.get_escrow_storage_version(), 999);
 }
 
 #[test]

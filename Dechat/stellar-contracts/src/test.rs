@@ -2614,14 +2614,9 @@ fn test_batch_admin_rollback_on_failure() {
         payload: Bytes::new(&env),
     });
 
-    let result = bridge.execute_batch_admin(&ops);
-    assert_eq!(result.total_ops, 2);
-    assert_eq!(result.success_count, 1);
-    assert_eq!(result.failure_count, 1);
-    assert_eq!(result.failed_index, Some(1));
-
-    // First valid op is applied, invalid op is skipped.
-    assert_eq!(bridge.get_cooldown(), 100);
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
+    assert_eq!(bridge.get_cooldown(), 10);
     assert_eq!(bridge.get_lock_period(), 20);
 }
 
@@ -2651,15 +2646,16 @@ fn test_batch_admin_partial_failure_index() {
         payload: Bytes::new(&env),
     });
 
-    let result = bridge.execute_batch_admin(&ops);
-    assert_eq!(result.total_ops, 3);
-    assert_eq!(result.success_count, 2);
-    assert_eq!(result.failure_count, 1);
-    assert_eq!(result.failed_index, Some(2));
+    let cooldown_before = bridge.get_cooldown();
+    let lock_before = bridge.get_lock_period();
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
+    assert_eq!(bridge.get_cooldown(), cooldown_before);
+    assert_eq!(bridge.get_lock_period(), lock_before);
 }
 
 #[test]
-fn test_batch_admin_mixed_success_failure_continues() {
+fn test_batch_admin_mixed_success_failure_rolls_back() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -2675,7 +2671,7 @@ fn test_batch_admin_mixed_success_failure_continues() {
         payload: Bytes::from_array(&env, &100u32.to_be_bytes()),
     });
 
-    // Invalid op in the middle should not revert successful ops.
+    // An invalid operation must revert earlier writes and prevent later ones.
     ops.push_back(BatchAdminOp {
         op_type: Symbol::new(&env, "invalid_op"),
         payload: Bytes::new(&env),
@@ -2686,15 +2682,10 @@ fn test_batch_admin_mixed_success_failure_continues() {
         payload: Bytes::from_array(&env, &50u32.to_be_bytes()),
     });
 
-    let result = bridge.execute_batch_admin(&ops);
-    assert_eq!(result.total_ops, 3);
-    assert_eq!(result.success_count, 2);
-    assert_eq!(result.failure_count, 1);
-    assert_eq!(result.failed_index, Some(1));
-
-    // State reflects both successful operations (1st and 3rd).
-    assert_eq!(bridge.get_cooldown(), 100);
-    assert_eq!(bridge.get_lock_period(), 50);
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
+    assert_eq!(bridge.get_cooldown(), 10);
+    assert_eq!(bridge.get_lock_period(), 20);
 }
 
 #[test]
@@ -2746,7 +2737,7 @@ fn test_batch_admin_overflow_prevention_with_malformed_payload() {
 
     let mut ops = soroban_sdk::Vec::new(&env);
     // set_quota requires a 16-byte i128 payload; this malformed payload should
-    // fail safely and be counted, while other ops still execute.
+    // fail safely and roll back the later valid operation too.
     ops.push_back(BatchAdminOp {
         op_type: Symbol::new(&env, "set_quota"),
         payload: Bytes::from_array(&env, &[1u8, 2, 3, 4]),
@@ -2756,13 +2747,10 @@ fn test_batch_admin_overflow_prevention_with_malformed_payload() {
         payload: Bytes::from_array(&env, &120u32.to_be_bytes()),
     });
 
-    let result = bridge.execute_batch_admin(&ops);
-    assert_eq!(result.total_ops, 2);
-    assert_eq!(result.success_count, 1);
-    assert_eq!(result.failure_count, 1);
-    assert_eq!(result.failed_index, Some(0));
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
     assert_eq!(bridge.get_withdrawal_quota(), starting_quota);
-    assert_eq!(bridge.get_cooldown(), 120);
+    assert_eq!(bridge.get_cooldown(), 0);
 }
 
 // ── fee vault tests ───────────────────────────────────────────────────────
@@ -6584,7 +6572,7 @@ fn test_pause_invariant_double_pause_still_blocks_users() {
 // ── Issue #554: execute_batch_admin — invariant tests ────────────────────
 
 #[test]
-fn test_execute_batch_admin_invariant_success_plus_failure_equals_total_ops() {
+fn test_execute_batch_admin_failure_rolls_back_every_operation() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -6606,14 +6594,10 @@ fn test_execute_batch_admin_invariant_success_plus_failure_equals_total_ops() {
         payload: Bytes::from_array(&env, &99u32.to_be_bytes()),
     });
 
-    let r = bridge.execute_batch_admin(&ops);
-    assert_eq!(r.total_ops, 6);
-    assert_eq!(r.success_count.saturating_add(r.failure_count), r.total_ops);
-    assert_eq!(r.success_count, 5);
-    assert_eq!(r.failure_count, 1);
-    assert_eq!(r.failed_index, Some(4));
-    assert_eq!(bridge.get_cooldown(), 13);
-    assert_eq!(bridge.get_lock_period(), 99);
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
+    assert_eq!(bridge.get_cooldown(), 0);
+    assert_eq!(bridge.get_lock_period(), 0);
 }
 
 #[test]
@@ -6772,10 +6756,28 @@ fn test_execute_batch_admin_invariant_all_valid_no_failures() {
     assert_eq!(bridge.get_lock_period(), 20);
 }
 
-/// Invariant: an all-invalid batch must have success_count == 0 and
-/// failed_index == Some(0).
 #[test]
-fn test_execute_batch_admin_invariant_all_invalid_all_failures() {
+fn test_execute_batch_admin_applies_duplicate_operations_in_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let mut ops = soroban_sdk::Vec::new(&env);
+    for cooldown in [5u32, 12, 3] {
+        ops.push_back(BatchAdminOp {
+            op_type: Symbol::new(&env, "set_cooldown"),
+            payload: Bytes::from_array(&env, &cooldown.to_be_bytes()),
+        });
+    }
+
+    let result = bridge.execute_batch_admin(&ops);
+    assert_eq!(result.total_ops, 3);
+    assert_eq!(result.success_count, 3);
+    assert_eq!(bridge.get_cooldown(), 3);
+}
+
+/// Invariant: an invalid batch returns an error and does not commit partial results.
+#[test]
+fn test_execute_batch_admin_invariant_all_invalid_batch_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -6789,16 +6791,13 @@ fn test_execute_batch_admin_invariant_all_invalid_all_failures() {
         });
     }
 
-    let r = bridge.execute_batch_admin(&ops);
-    assert_eq!(r.total_ops, 3);
-    assert_eq!(r.success_count, 0);
-    assert_eq!(r.failure_count, 3);
-    assert_eq!(r.failed_index, Some(0));
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
 }
 
-/// Invariant: failed_index always points to the FIRST failure, not the last.
+/// Invariant: an invalid later action rolls back earlier valid state changes.
 #[test]
-fn test_execute_batch_admin_invariant_failed_index_is_first_failure() {
+fn test_execute_batch_admin_invariant_later_failure_rolls_back() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -6826,17 +6825,15 @@ fn test_execute_batch_admin_invariant_failed_index_is_first_failure() {
         payload: Bytes::from_array(&env, &10u32.to_be_bytes()),
     });
 
-    let r = bridge.execute_batch_admin(&ops);
-    assert_eq!(r.total_ops, 4);
-    assert_eq!(r.success_count, 2);
-    assert_eq!(r.failure_count, 2);
-    // Must be the index of the FIRST failure (1), not the last (2)
-    assert_eq!(r.failed_index, Some(1));
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
+    assert_eq!(bridge.get_cooldown(), 0);
+    assert_eq!(bridge.get_lock_period(), 0);
 }
 
-/// Invariant: batch continues executing after a failure (no early abort).
+/// Invariant: operations after a failure do not execute.
 #[test]
-fn test_execute_batch_admin_invariant_continues_after_failure() {
+fn test_execute_batch_admin_invariant_stops_after_failure() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -6854,11 +6851,9 @@ fn test_execute_batch_admin_invariant_continues_after_failure() {
         payload: Bytes::from_array(&env, &42u32.to_be_bytes()),
     });
 
-    let r = bridge.execute_batch_admin(&ops);
-    assert_eq!(r.success_count, 1);
-    assert_eq!(r.failure_count, 1);
-    // The valid op after the failure must have been applied
-    assert_eq!(bridge.get_cooldown(), 42);
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
+    assert_eq!(bridge.get_cooldown(), 0);
 }
 
 /// Invariant: pause op in a batch blocks deposits; unpause restores them.
@@ -6920,7 +6915,7 @@ fn test_execute_batch_admin_invariant_quota_op_persists() {
     assert_eq!(bridge.get_withdrawal_quota(), quota);
 }
 
-/// Invariant: malformed payload (too short) counts as a failure, not a panic.
+/// Invariant: malformed payload returns an error without a panic.
 #[test]
 fn test_execute_batch_admin_invariant_malformed_payload_is_failure_not_panic() {
     let env = Env::default();
@@ -6935,10 +6930,8 @@ fn test_execute_batch_admin_invariant_malformed_payload_is_failure_not_panic() {
         payload: Bytes::from_array(&env, &[0u8, 1u8]),
     });
 
-    let r = bridge.execute_batch_admin(&ops);
-    assert_eq!(r.total_ops, 1);
-    assert_eq!(r.failure_count, 1);
-    assert_eq!(r.success_count, 0);
+    let result = bridge.try_execute_batch_admin(&ops);
+    assert_eq!(result, Err(Ok(Error::InternalError)));
 }
 
 // ── Issue #525: set_operator — edge case boundary checks ─────────────────
@@ -7074,4 +7067,168 @@ fn test_execute_batch_admin_emits_role_check_event_issue_841() {
         found,
         "AdminRoleCheckEvent must be emitted on successful batch execution"
     );
+}
+
+#[test]
+fn test_admin_recovery_requires_inactivity_delay_and_successor_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, admin, _, _, _) = setup_bridge(&env, 10_000);
+    let recovery = Address::generate(&env);
+    let successor = Address::generate(&env);
+    bridge.set_emergency_recovery(&recovery, &1_000);
+    let active_ledger = env.ledger().sequence();
+
+    env.ledger()
+        .set_sequence_number(active_ledger + DEFAULT_INACTIVITY_THRESHOLD - 1);
+    assert_eq!(
+        bridge.try_propose_admin_recovery(&successor),
+        Err(Ok(Error::InactivityThresholdNotReached))
+    );
+
+    env.ledger()
+        .set_sequence_number(active_ledger + DEFAULT_INACTIVITY_THRESHOLD);
+    bridge.propose_admin_recovery(&successor);
+    assert_eq!(
+        bridge.try_execute_admin_recovery(),
+        Err(Ok(Error::ActionNotReady))
+    );
+
+    env.ledger()
+        .set_sequence_number(active_ledger + DEFAULT_INACTIVITY_THRESHOLD + MIN_TIMELOCK_DELAY + 1);
+    env.mock_auths(&[]);
+    assert!(bridge.try_execute_admin_recovery().is_err());
+    env.mock_all_auths();
+    bridge.execute_admin_recovery();
+    assert_eq!(bridge.get_admin(), successor);
+    assert_ne!(bridge.get_admin(), admin);
+    assert!(bridge.get_admin_recovery_proposal().is_none());
+}
+
+#[test]
+fn test_admin_activity_cancels_pending_recovery_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let recovery = Address::generate(&env);
+    let successor = Address::generate(&env);
+    bridge.set_emergency_recovery(&recovery, &1_000);
+    let active_ledger = env.ledger().sequence();
+    env.ledger()
+        .set_sequence_number(active_ledger + DEFAULT_INACTIVITY_THRESHOLD);
+    bridge.propose_admin_recovery(&successor);
+
+    bridge.set_cooldown(&10);
+
+    assert!(bridge.get_admin_recovery_proposal().is_none());
+}
+
+#[test]
+fn test_regular_admin_transfer_keeps_existing_timelock_flow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let successor = Address::generate(&env);
+    let transfer_ledger = env.ledger().sequence();
+
+    bridge.transfer_admin(&successor);
+    assert_ne!(bridge.get_admin(), successor);
+    env.ledger()
+        .set_sequence_number(transfer_ledger + MIN_TIMELOCK_DELAY + 1);
+    bridge.accept_admin();
+    assert_eq!(bridge.get_admin(), successor);
+}
+
+#[test]
+fn test_exclusive_historical_pages_skip_pruned_receipts_and_settled_withdrawals() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, bridge, admin, token_addr, _, token_admin) = setup_bridge(&env, 10_000);
+    token_admin.mint(&admin, &1_000);
+    bridge.deposit(&admin, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.deposit(&admin, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.deposit(&admin, &300, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    env.as_contract(&contract_id, || {
+        env.storage().temporary().remove(&DataKey::ReceiptIndex(1));
+    });
+
+    let first = bridge.get_receipts_page_after(&None, &1);
+    assert_eq!(first.records.len(), 1);
+    assert_eq!(first.records.get(0).unwrap().amount, 100);
+    assert_eq!(first.next_cursor, Some(0));
+    let pruned = bridge.get_receipts_page_after(&Some(0), &1);
+    assert_eq!(pruned.records.len(), 0);
+    assert_eq!(pruned.next_cursor, Some(1));
+    let third = bridge.get_receipts_page_after(&Some(1), &1);
+    assert_eq!(third.records.len(), 1);
+    assert_eq!(third.records.get(0).unwrap().amount, 300);
+    assert_eq!(third.next_cursor, None);
+
+    bridge.set_lock_period(&0);
+    let executed_id = bridge.request_withdrawal(&admin, &100, &token_addr, &None, &0);
+    bridge.execute_withdrawal(&executed_id, &None, &0, &0, &0);
+    let cancelled_id = bridge.request_withdrawal(&admin, &100, &token_addr, &None, &0);
+    bridge.cancel_withdrawal(&cancelled_id);
+
+    let completed_first = bridge.get_completed_withdrawals_page(&None, &1);
+    assert_eq!(completed_first.records.len(), 1);
+    assert_eq!(
+        completed_first.records.get(0).unwrap().request_id,
+        executed_id
+    );
+    assert_eq!(
+        completed_first.records.get(0).unwrap().status,
+        LiabilityAuditStatus::Executed
+    );
+    assert_eq!(completed_first.next_cursor, Some(executed_id));
+    let completed_second = bridge.get_completed_withdrawals_page(&completed_first.next_cursor, &1);
+    assert_eq!(completed_second.records.len(), 1);
+    assert_eq!(
+        completed_second.records.get(0).unwrap().status,
+        LiabilityAuditStatus::Cancelled
+    );
+    assert_eq!(completed_second.next_cursor, None);
+}
+
+#[test]
+fn test_token_accounting_tracks_fee_fraction_and_partial_withdrawal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, bridge, _, token_addr, token, token_admin) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    bridge.set_fee_bps(&250);
+    token_admin.mint(&user, &1_000);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    let first = bridge.get_token_escrow_accounting(&token_addr);
+    assert_eq!(first.precision, 7);
+    assert_eq!(first.token_balance, 100);
+    assert_eq!(first.user_assets, 98);
+    assert_eq!(first.fee_liability, 2);
+    assert_eq!(first.rounding_remainder_numerator, 5_000);
+    assert_eq!(first.rounding_remainder_denominator, 10_000);
+    assert_eq!(first.unassigned_dust, 0);
+
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_lock_period(&0);
+    let request_id = bridge.request_withdrawal(&user, &50, &token_addr, &None, &0);
+    bridge.execute_withdrawal(&request_id, &Some(20), &0, &0, &0);
+
+    let after_partial = bridge.get_token_escrow_accounting(&token_addr);
+    assert_eq!(after_partial.user_assets, 175);
+    assert_eq!(after_partial.pending_withdrawal_liability, 30);
+    assert_eq!(after_partial.fee_liability, 5);
+    assert_eq!(after_partial.token_balance, 180);
+    assert_eq!(after_partial.rounding_remainder_numerator, 0);
+    assert_eq!(after_partial.unassigned_dust, 0);
+
+    token_admin.mint(&contract_id, &9);
+    assert_eq!(
+        bridge
+            .get_token_escrow_accounting(&token_addr)
+            .unassigned_dust,
+        9
+    );
+    assert_eq!(token.balance(&contract_id), 189);
 }

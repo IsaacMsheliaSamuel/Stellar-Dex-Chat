@@ -12,6 +12,7 @@ release and deployment workflow failure in this repository.
 | [Migration and deployment](migration.md) | Pre-deployment readiness gate, signer availability, network config, migrations, canary verification, contract rollback | `deploy-futurenet.yml` |
 | [Artifact attestation and SBOM](artifact-attestation.md) | SBOM generation (Rust + Node), provenance recording, digest manifest, release-validation job | `security-audit.yml`, `frontend-build.yml`, `deploy-futurenet.yml` |
 | [Escrow liability parity](liability-parity.md) | Read-only comparison of on-chain escrow receipts and persisted payout reservations | manual operations |
+| [Contract ABI drift](contract-abi-drift.md) | Soroban spec snapshot comparison, stale/breaking binding diagnosis, spec refresh | `frontend.yml`, manual checks |
 
 ## Related operational docs
 
@@ -40,6 +41,7 @@ release and deployment workflow failure in this repository.
 | `Next.js Build failed` | [frontend-deploy](frontend-deploy.md) | §2.2a |
 | `ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY` | [frontend-deploy](frontend-deploy.md) | §2.2b |
 | Vitest test failures | [frontend-deploy](frontend-deploy.md) | §2.3 |
+| `ABI drift(s) detected` / `contract:abi:check` exits non-zero | [contract-abi-drift](contract-abi-drift.md) | §1–§4 |
 | Playwright E2E failure | [frontend-deploy](frontend-deploy.md) | §2.4 |
 | `record "artifact-digest" "fail"` (deploy) | [migration](migration.md) | §2.1 |
 | `record "network-config" "fail"` | [migration](migration.md) | §2.2 |
