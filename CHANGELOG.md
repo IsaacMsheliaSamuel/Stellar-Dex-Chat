@@ -469,6 +469,7 @@ Repo Avatar
 - **fixtures:** Deterministic full-stack fixture with seeded ledger history
 - Add staged contract deployment with preflight and post-deploy verification
 - **reconciliation:** Add read-only escrow liability parity checks
+- **frontend:** Add cross-version ABI compatibility checks
 - **a11y:** Announce asynchronous payout transitions once
 - **frontend:** Enforce critical financial coverage thresholds
 
@@ -1374,6 +1375,7 @@ Repo Avatar
 - Enforce least-privilege workflow permissions and pinned actions
 - **changelog:** Update changelog [skip ci]
 - **deps:** Bump the actions group with 2 updates
+- **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
