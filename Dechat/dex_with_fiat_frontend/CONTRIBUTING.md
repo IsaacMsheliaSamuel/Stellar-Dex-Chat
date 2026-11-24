@@ -16,6 +16,7 @@ Run the applicable checks locally before pushing:
 - `pnpm typecheck` — TypeScript contract checks.
 - `pnpm test` — unit and integration tests.
 - `pnpm test:e2e` — Playwright end-to-end and visual regression tests.
+- `pnpm coverage:critical:check`, `pnpm coverage:critical:mutation`, and `pnpm coverage:critical:changed-lines` — coverage floors for critical financial modules. See [docs/COVERAGE_THRESHOLDS.md](docs/COVERAGE_THRESHOLDS.md).
 
 If a check is not applicable to your change, note why in the PR description.
 
