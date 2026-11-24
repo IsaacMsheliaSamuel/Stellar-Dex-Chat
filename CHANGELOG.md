@@ -470,6 +470,7 @@ Repo Avatar
 - Add staged contract deployment with preflight and post-deploy verification
 - **reconciliation:** Add read-only escrow liability parity checks
 - **a11y:** Announce asynchronous payout transitions once
+- **frontend:** Enforce critical financial coverage thresholds
 
 ### Fixed
 
@@ -1373,6 +1374,7 @@ Repo Avatar
 - Enforce least-privilege workflow permissions and pinned actions
 - **changelog:** Update changelog [skip ci]
 - **deps:** Bump the actions group with 2 updates
+- **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 
