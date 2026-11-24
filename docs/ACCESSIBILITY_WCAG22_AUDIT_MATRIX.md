@@ -59,8 +59,9 @@ Transaction status surfaces (`TransactionProgressBar`, `TransactionStatusCue`,
 - Status is never conveyed by colour alone: each state renders a distinct
   icon, a visible label, and an `sr-only` label for screen readers.
 - Every foreground/soft-background token reaches at least 4.5:1 in both light
-  and dark themes; forced-colors mode uses `Canvas`/`CanvasText`/`Highlight`
-  so the user's high-contrast palette is respected.
+  and dark themes; `prefers-contrast: more` thickens status borders, and
+  forced-colors mode uses `Canvas`/`CanvasText`/`Highlight` so the user's
+  high-contrast palette is respected.
 - Terminal failure is announced assertively; transient progress and warnings
   politely. Clamping of the displayed percentage cannot desynchronise
   `aria-valuenow` from the visible value.

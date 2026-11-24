@@ -150,6 +150,11 @@ describe('statusContrast — CSS motion/high-contract surfaces', () => {
     expect(globalsCss).toMatch(/scroll-behavior:\s*auto/);
   });
 
+  it('declares a prefers-contrast block that reinforces status boundaries', () => {
+    expect(globalsCss).toMatch(/@media\s*\(prefers-contrast:\s*more\)/);
+    expect(globalsCss).toMatch(/border-width:\s*2px/);
+  });
+
   it('declares forced-colors rules for status cues and the progress fill', () => {
     expect(globalsCss).toMatch(/@media\s*\(forced-colors:\s*active\)/);
     expect(globalsCss).toMatch(/\[data-testid='transaction-status-cue'\]/);

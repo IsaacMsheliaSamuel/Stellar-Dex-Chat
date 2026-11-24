@@ -601,6 +601,27 @@ select:focus {
   }
 }
 
+/*
+ * Users can also ask for more contrast without forcing a full system palette
+ * (#295). The validated status tokens already meet AA; thicker borders make
+ * the status surfaces unambiguous without changing colour values.
+ */
+@media (prefers-contrast: more) {
+  .status-cue,
+  .status-progress,
+  .status-success,
+  .status-warning,
+  .status-failure,
+  [data-testid='transaction-progress-bar'] {
+    border-width: 2px;
+  }
+
+  .status-progress-fill {
+    outline: 1px solid currentColor;
+    outline-offset: -1px;
+  }
+}
+
 /* High-contrast mode: ensure all buttons have visible borders */
 @media (forced-colors: active) {
   button,

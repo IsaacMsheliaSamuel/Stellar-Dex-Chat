@@ -8,7 +8,9 @@ and high-contrast (forced-colors) modes.
 
 - Applies to the status surfaces in `Dechat/dex_with_fiat_frontend`:
   `TransactionProgressBar`, `TransactionStatusCue`,
-  `WalletConnectionTimeline`, and `TransactionAmountDisplay`.
+  `WalletConnectionTimeline`, `TransactionAmountDisplay`, and the failure
+  `ErrorSummary`. Other animated status surfaces inherit the global CSS
+  reduced-motion backstop described below.
 - **No financial behaviour changes.** BigInt stroops, minor-unit conversion,
   quote expiry, payout state transitions, and retry/idempotency logic are not
   touched. `TransactionProgressBar` only clamps the *reported* percentage used
@@ -42,6 +44,7 @@ are otherwise colour-only.
 | Progress fill width | 300 ms transition | No transition |
 | Amount display (`framer-motion`) | translate + scale + fade | Fade only, 0.01 s, no delay |
 | Auto-scroll to latest amount | `scrollIntoView({ behavior: 'smooth' })` | `behavior: 'auto'` |
+| Failure summary auto-scroll (`ErrorSummary`) | Smooth scroll to `role="alert"` | `behavior: 'auto'` |
 | CSS keyframes (`fadeIn`, `pulse`, `float`, …) | Enabled | Neutralised by a global `@media (prefers-reduced-motion: reduce)` block |
 
 `useReducedMotion()` wraps the existing `useMediaQuery` hook and subscribes to
@@ -69,6 +72,10 @@ they are used as soft fills; they are deliberately **not** used as status text
 colours, since `#d97706` on white is only ~2.6:1.
 
 ### High-contrast / forced-colors mode
+
+For users who request more contrast without a full system palette
+(`prefers-contrast: more`), status surfaces gain thicker borders; the validated
+colour tokens are unchanged.
 
 In `@media (forced-colors: active)` status surfaces use the browser-provided
 system colours (`Canvas`, `CanvasText`, `Highlight`) rather than hard-coded
@@ -98,6 +105,7 @@ the primary status signals.
 | `src/components/__tests__/TransactionProgressBar.test.tsx` | Step mapping, clamping, live regions, retry/cancel, reduced-motion gating |
 | `src/components/__tests__/WalletConnectionTimeline.test.tsx` | Pulse gating, text status, mid-transfer disconnect alert |
 | `src/components/__tests__/TransactionAmountDisplay.reducedMotion.test.tsx` | Instant scroll, readable error text |
+| `src/components/__tests__/ErrorSummary.reducedMotion.test.tsx` | Instant scroll to an assertive failure summary |
 
 Run the focused suite from `Dechat/dex_with_fiat_frontend`:
 
