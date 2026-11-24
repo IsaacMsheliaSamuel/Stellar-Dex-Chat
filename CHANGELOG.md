@@ -472,6 +472,7 @@ Repo Avatar
 - **frontend:** Add cross-version ABI compatibility checks
 - **a11y:** Announce asynchronous payout transitions once
 - **frontend:** Enforce critical financial coverage thresholds
+- Resolve issues #201 #202 #203 #204 - offline queue replay prevention, quote expiry UX, schema versioning, account-scoped chat privacy
 
 ### Fixed
 
@@ -1376,6 +1377,7 @@ Repo Avatar
 - Enforce least-privilege workflow permissions and pinned actions
 - **changelog:** Update changelog [skip ci]
 - **deps:** Bump the actions group with 2 updates
+- **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
 - **changelog:** Update changelog [skip ci]
