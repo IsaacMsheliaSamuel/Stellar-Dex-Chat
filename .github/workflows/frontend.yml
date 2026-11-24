@@ -126,6 +126,9 @@ jobs:
       - name: Fixture privacy guard
         run: pnpm test:fixtures:privacy
 
+      - name: Contract ABI compatibility
+        run: pnpm contract:abi:check
+
   # ── 2. Next.js build (independent of unit tests) ──────────────────────────
   build:
     name: Build

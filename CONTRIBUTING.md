@@ -123,6 +123,18 @@ To run only the API contract tests locally:
 npm run test:api-contract
 ```
 
+## Cross-version contract ABI checks
+
+The frontend checks committed TypeScript contract bindings against the current Soroban spec and every supported release snapshot. This catches stale method lists, changed signatures, renamed error codes, and DTO field drift before merge.
+
+```sh
+cd Dechat/dex_with_fiat_frontend
+pnpm contract:abi:check
+pnpm exec vitest run src/contracts/__tests__/abiCompatibility.test.ts
+```
+
+The release list lives in `src/contracts/abi/specs/manifest.json`. The `current` release must match the bindings exactly. Supported older releases may be a subset of the current client, but any method, signature, error code, or field they require must still be present. When a contract build is available, capture a fresh spec with `pnpm contract:abi:capture --release current --status current --wasm <path-to.wasm> --output src/contracts/abi/specs/current.json`.
+
 ## Cross-browser wallet and transaction UX smoke suite
 
 The `full` mode runs a focused Playwright suite across **Chromium, Firefox, and WebKit**. It covers wallet connection, signature rejection, pending transaction recovery, and payout status. Browser-specific wallet mocks are isolated per browser project so a mock for one engine cannot mask a failure in another.
@@ -185,7 +197,7 @@ fail if required items are left unchecked when the corresponding paths change.
 
 ### Contract / ABI changes
 
-- [ ] Contract interface changes include regenerated bindings.
+- [ ] Contract interface changes include regenerated bindings and a passing `pnpm contract:abi:check`.
 - [ ] The CI drift check passes with no ABI diff.
 - [ ] Breaking changes are documented and versioned as described above.
 - [ ] Regeneration left unrelated files unchanged.
