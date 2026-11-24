@@ -16,6 +16,7 @@ This directory contains the Soroban smart contracts for the Stellar DEX Chat app
 | [docs/VERSION_MIGRATION.md](./docs/VERSION_MIGRATION.md) | Event versioning, upgrade mechanism, and migration guides |
 | [docs/OVERFLOW_PREVENTION.md](./docs/OVERFLOW_PREVENTION.md) | Overflow-prevention strategies and contributor checklist |
 | [docs/INVARIANT_TESTING.md](./docs/INVARIANT_TESTING.md) | Invariant-testing architecture and contributor checklist |
+| [docs/MUTATION_TESTING.md](./docs/MUTATION_TESTING.md) | Focused security mutation tests for auth, nonce, state-transition, and uniqueness guards |
 
 ---
 
@@ -68,6 +69,9 @@ stellar contract build
 
 # Test
 cargo test
+
+# Focused security mutation tests
+python3 scripts/run_security_mutation_tests.py
 
 # Deploy (Testnet)
 stellar contract deploy \

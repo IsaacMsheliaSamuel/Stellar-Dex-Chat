@@ -22,6 +22,13 @@ kinds of regressions that unit tests miss: a reordering of arithmetic, a
 missed guard, an off-by-one in a counter, or a forgetting to subtract
 liabilities on a partial withdrawal.
 
+For the security-critical guards that are easy to remove by accident — admin
+authentication, signature/nonce validation, cancellation state transitions, and
+uniqueness checks — see the complementary
+[Mutation Testing Guide](MUTATION_TESTING.md). Where invariant tests assert that
+state stays coherent, the mutation suite proves that a focused test actually
+fails when one of those guards is disabled.
+
 ---
 
 ## Core Accounting Invariants

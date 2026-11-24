@@ -113,6 +113,16 @@ Run `full` before opening a pull request. If you are only touching one area, the
 
 The `contracts` mode includes a regression suite that benchmarks each public contract entry point against the maximum supported queue size, signer count, and batch size. The suite fails when CPU instructions, memory, or compiled Wasm size exceed the documented thresholds. If you change contract logic, run this suite and confirm the thresholds still hold; if a threshold must change intentionally, update the documented values and call out the change explicitly in your pull request.
 
+## Contract security mutation tests
+
+Changes to admin authorization, signature or nonce validation, withdrawal execution, or the cancellation lifecycle should also be checked with the focused mutation suite:
+
+```sh
+make contracts-mutation
+```
+
+The harness temporarily edits `Dechat/stellar-contracts/src/lib.rs`, so run it from a clean worktree. See [Dechat/stellar-contracts/docs/MUTATION_TESTING.md](Dechat/stellar-contracts/docs/MUTATION_TESTING.md) for the curated mutants and instructions for adding new ones.
+
 ## API consumer contract tests
 
 The `frontend` mode includes API consumer contract tests that validate route responses, error shapes, and status codes against the versioned OpenAPI schema. These tests cover malformed inputs and provider failures so that undocumented response drift is caught before merge. When you change an API route or its response shape, update the published schema and the corresponding tests together.

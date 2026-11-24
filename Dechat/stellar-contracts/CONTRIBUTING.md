@@ -46,6 +46,24 @@ cargo clippy --all-targets --all-features -- -D warnings
 ```
 Ensure that all tests pass before opening a Pull Request. We run automated checks in our CI/CD pipeline, and PRs with failing tests will not be merged.
 
+## Security Mutation Tests
+
+The focused security mutation suite lives in `tests/security_mutation_regressions.rs`
+and is driven by `scripts/run_security_mutation_tests.py`. Run it before opening a
+PR that touches admin authorization, signature or nonce validation, withdrawal
+execution, or the cancellation lifecycle:
+
+```bash
+python3 -m py_compile scripts/run_security_mutation_tests.py
+python3 scripts/run_security_mutation_tests.py --validate
+python3 scripts/run_security_mutation_tests.py
+```
+
+The harness temporarily edits `src/lib.rs`, so run it from a clean worktree and
+never while another build or editor is writing that file. See
+[docs/MUTATION_TESTING.md](docs/MUTATION_TESTING.md) for the curated mutant list,
+result interpretation, and instructions for adding a mutant.
+
 ## Test Snapshots
 
 Running `cargo test` writes a JSON snapshot to `test_snapshots/` for every
