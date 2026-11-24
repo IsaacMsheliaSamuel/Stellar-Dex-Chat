@@ -1374,6 +1374,7 @@ Repo Avatar
 - **changelog:** Update changelog [skip ci]
 - **deps:** Bump the actions group with 2 updates
 - **changelog:** Update changelog [skip ci]
+- **changelog:** Update changelog [skip ci]
 
 ### Deprecated
 
