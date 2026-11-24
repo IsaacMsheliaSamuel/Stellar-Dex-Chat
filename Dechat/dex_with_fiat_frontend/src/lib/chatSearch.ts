@@ -5,6 +5,8 @@ export interface SearchFilters {
   walletAddress: string;
   dateFrom: string; // ISO date string YYYY-MM-DD
   dateTo: string;   // ISO date string YYYY-MM-DD
+  /** When set, only sessions belonging to this account are searched. */
+  accountScopedWallet?: string;
 }
 
 export interface MessageMatch {
@@ -13,12 +15,134 @@ export interface MessageMatch {
   message: ChatMessage;
   /** Indices [start, end) of each keyword match within message.content */
   highlights: Array<[number, number]>;
+  /** Whether the message contains payout-sensitive data that was redacted. */
+  redacted: boolean;
 }
 
 export interface SearchResults {
   matches: MessageMatch[];
   totalSessions: number;
   totalMessages: number;
+  /** Number of matches redacted for privacy. */
+  redactedCount: number;
+}
+
+/** Fields considered payout-sensitive and redacted from search results. */
+const PAYOUT_SENSITIVE_FIELDS = ['bankAccount', 'transferCode', 'reference'];
+
+/**
+ * Redacts payout-sensitive fields from a chat message for privacy-safe search
+ * and export. Returns a copy of the message with sensitive fields replaced by
+ * redaction markers.
+ */
+export function redactPayoutSensitiveFields(message: ChatMessage): ChatMessage {
+  const redacted: ChatMessage = { ...message };
+
+  if (redacted.metadata?.transactionData) {
+    redacted.metadata.transactionData = {
+      ...redacted.metadata.transactionData,
+      bankAccount: undefined,
+      transferCode: undefined,
+      reference: '[REDACTED]',
+    };
+  }
+
+  // Redact sensitive patterns in message content (bank account numbers, recipient codes)
+  const sensitivePatterns = [
+    /\b\d{10}\b/g, // 10-digit NUBAN account numbers
+    /\bRCP_[A-Za-z0-9]+\b/g, // Paystack recipient codes
+  ];
+  let content = redacted.content;
+  for (const pattern of sensitivePatterns) {
+    content = content.replace(pattern, '[REDACTED]');
+  }
+  redacted.content = content;
+
+  return redacted;
+}
+
+/**
+ * Determines whether a message contains payout-sensitive data that should be
+ * redacted in search results.
+ */
+export function containsPayoutSensitiveData(message: ChatMessage): boolean {
+  if (message.metadata?.transactionData) {
+    const tx = message.metadata.transactionData;
+    if (tx.bankAccount || tx.transferCode || tx.reference) return true;
+  }
+  const sensitivePatterns = [
+    /\b\d{10}\b/,
+    /\bRCP_[A-Za-z0-9]+\b/,
+  ];
+  return sensitivePatterns.some((p) => p.test(message.content));
+}
+
+/**
+ * Searches all sessions for messages matching the given filters.
+ * All non-empty filters are ANDed together.
+ *
+ * When `accountScopedWallet` is set, only sessions belonging to that wallet
+ * address are searched, enforcing account-scoped privacy.
+ */
+export function searchChatHistory(
+  sessions: ChatSession[],
+  filters: SearchFilters,
+): SearchResults {
+  const { keyword, walletAddress, dateFrom, dateTo, accountScopedWallet } = filters;
+  const hasKeyword = keyword.trim().length > 0;
+  const hasWallet = walletAddress.trim().length > 0;
+  const hasDate = dateFrom.trim().length > 0 || dateTo.trim().length > 0;
+  const hasAccountScope = accountScopedWallet?.trim().length > 0;
+
+  const totalMessages = sessions.reduce((sum, s) => sum + s.messages.length, 0);
+
+  // If no filters at all, return early with accurate counts but no matches.
+  if (!hasKeyword && !hasWallet && !hasDate && !hasAccountScope) {
+    return { matches: [], totalSessions: sessions.length, totalMessages, redactedCount: 0 };
+  }
+
+  const matches: MessageMatch[] = [];
+  let redactedCount = 0;
+
+  for (const session of sessions) {
+    // Account scope: only sessions owned by the scoped wallet are searchable
+    if (hasAccountScope) {
+      const sessionWallet = (session.walletAddress ?? '').toLowerCase();
+      if (sessionWallet !== accountScopedWallet.trim().toLowerCase()) continue;
+    }
+
+    // Wallet address filter applies at the session level
+    if (hasWallet) {
+      const sessionWallet = (session.walletAddress ?? '').toLowerCase();
+      if (!sessionWallet.includes(walletAddress.trim().toLowerCase())) continue;
+    }
+
+    for (const message of session.messages) {
+      if (message.role === 'system') continue;
+
+      // Date range filter
+      if (hasDate && !matchesDateRange(message, dateFrom, dateTo)) continue;
+
+      // Keyword filter with highlight positions
+      const highlights = hasKeyword ? findHighlights(message.content, keyword.trim()) : [];
+      if (hasKeyword && highlights.length === 0) continue;
+
+      const redacted = containsPayoutSensitiveData(message);
+      const displayMessage = redacted ? redactPayoutSensitiveFields(message) : message;
+
+      if (redacted) redactedCount++;
+
+      matches.push({
+        sessionId: session.id,
+        sessionTitle: session.title || 'Untitled',
+        message: displayMessage,
+        highlights,
+        redacted,
+      });
+    }
+  }
+
+  return { matches, totalSessions: sessions.length, totalMessages, redactedCount };
 }
 
 export interface DebouncedFn<T extends (...args: unknown[]) => void> {

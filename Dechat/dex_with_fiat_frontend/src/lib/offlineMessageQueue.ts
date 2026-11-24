@@ -8,6 +8,17 @@ const DB_VERSION = 1;
 const STORE_NAME = 'queued-messages';
 
 /**
+ * Classification of a queued action for replay safety.
+ *
+ * `safe_to_retry` actions (e.g. chat messages) can be automatically resubmitted
+ * when connectivity returns after basic revalidation. `never_auto_submit`
+ * actions (e.g. financial intents like deposits, withdrawals, payouts) must
+ * never be replayed without explicit user consent and full revalidation of
+ * quotes, balances, account identity, and consent.
+ */
+export type QueuedActionType = 'safe_to_retry' | 'never_auto_submit';
+
+/**
  * Represents a message queued for sending when the user is offline.
  *
  * This interface captures all the information needed to reconstruct and send
@@ -20,6 +31,11 @@ const STORE_NAME = 'queued-messages';
  * @property pendingAssistantId - The assistant ID expected to respond to this message.
  * @property machineSnapshot - The state machine snapshot for optimistic UI state restoration.
  * @property queuedAt - Unix timestamp in milliseconds when the message was queued.
+ * @property actionType - Classification of the queued action for replay safety.
+ * @property requiresRevalidation - When true, the action must be revalidated
+ *   (quotes, balances, identity, consent) before any resume attempt.
+ * @property maxRetryAgeMs - Maximum age in milliseconds after which a queued
+ *   action is considered stale and must not be automatically retried.
  */
 export interface QueuedMessageRecord {
   id: string;
@@ -28,6 +44,9 @@ export interface QueuedMessageRecord {
   pendingAssistantId: string;
   machineSnapshot: unknown;
   queuedAt: number;
+  actionType: QueuedActionType;
+  requiresRevalidation: boolean;
+  maxRetryAgeMs: number;
 }
 
 /**
@@ -327,4 +346,98 @@ export function setQueuedMessageCount(count: number): void {
  */
 export function getQueuedMessageCount(): number {
   return currentCount;
+}
+
+/**
+ * Maximum age (30 minutes) after which a queued financial action is considered
+ * stale and must not be automatically retried without explicit user action.
+ */
+export const STALE_ACTION_MAX_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * Classifies a queued message record into a replay-safe action type.
+ *
+ * Actions that carry financial intent (deposit, withdrawal, payout, transfer)
+ * are classified as `never_auto_submit` and must never be replayed without
+ * explicit user consent and full revalidation. Plain chat messages are
+ * `safe_to_retry`.
+ *
+ * @param content - The queued message content to inspect for financial intent.
+ * @returns `never_auto_submit` when the content references financial actions,
+ *   otherwise `safe_to_retry`.
+ */
+export function classifyQueuedAction(content: string): QueuedActionType {
+  const financialKeywords = [
+    'deposit',
+    'withdraw',
+    'withdrawal',
+    'payout',
+    'transfer',
+    'send',
+    'convert',
+    'swap',
+    'bridge',
+  ];
+  const lower = content.toLowerCase();
+  const hasFinancialIntent = financialKeywords.some((kw) => lower.includes(kw));
+  return hasFinancialIntent ? 'never_auto_submit' : 'safe_to_retry';
+}
+
+/**
+ * Determines whether a queued record is stale and must not be automatically
+ * retried. A record is stale when its age exceeds `maxRetryAgeMs` or when it
+ * is a `never_auto_submit` action that has aged beyond the global stale
+ * threshold.
+ *
+ * @param record - The queued message record to evaluate.
+ * @param now - Current Unix timestamp in milliseconds (defaults to Date.now()).
+ * @returns true when the record is considered stale for automatic replay.
+ */
+export function isQueuedActionStale(
+  record: QueuedMessageRecord,
+  now: number = Date.now(),
+): boolean {
+  const age = now - record.queuedAt;
+  const maxAge = record.maxRetryAgeMs ?? STALE_ACTION_MAX_AGE_MS;
+  if (age > maxAge) return true;
+  if (record.actionType === 'never_auto_submit' && age > STALE_ACTION_MAX_AGE_MS) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Builds a `QueuedMessageRecord` with replay-safety defaults applied.
+ *
+ * Financial-intent content is automatically classified as `never_auto_submit`
+ * with revalidation required. Chat-only content is `safe_to_retry`.
+ *
+ * @param fields - Partial record fields; `id`, `content`, `optimisticUserId`,
+ *   `pendingAssistantId`, `machineSnapshot`, and `queuedAt` are required.
+ * @returns A complete `QueuedMessageRecord` with replay-safety defaults.
+ */
+export function buildQueuedMessageRecord(fields: {
+  id: string;
+  content: string;
+  optimisticUserId: string;
+  pendingAssistantId: string;
+  machineSnapshot: unknown;
+  queuedAt?: number;
+  actionType?: QueuedActionType;
+  requiresRevalidation?: boolean;
+  maxRetryAgeMs?: number;
+}): QueuedMessageRecord {
+  const inferredType = fields.actionType ?? classifyQueuedAction(fields.content);
+  return {
+    id: fields.id,
+    content: fields.content,
+    optimisticUserId: fields.optimisticUserId,
+    pendingAssistantId: fields.pendingAssistantId,
+    machineSnapshot: fields.machineSnapshot,
+    queuedAt: fields.queuedAt ?? Date.now(),
+    actionType: inferredType,
+    requiresRevalidation:
+      fields.requiresRevalidation ?? inferredType === 'never_auto_submit',
+    maxRetryAgeMs: fields.maxRetryAgeMs ?? STALE_ACTION_MAX_AGE_MS,
+  };
 }
