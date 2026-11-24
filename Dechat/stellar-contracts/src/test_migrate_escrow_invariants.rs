@@ -1,5 +1,8 @@
 #![cfg(test)]
-use crate::{DataKey, Error, FiatBridge, FiatBridgeClient, ESCROW_STORAGE_VERSION};
+use crate::{
+    DataKey, Error, FiatBridge, FiatBridgeClient, ESCROW_STORAGE_VERSION,
+    MAX_ESCROW_MIGRATION_BATCH_SIZE,
+};
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 fn create_token_contract<'a>(
@@ -89,9 +92,15 @@ fn test_migrate_escrow_invariants() {
 
     // Total receipts = 3
 
-    // batch_size = 0
-    let migrated_zero = bridge.migrate_escrow(&0);
-    assert_eq!(migrated_zero, 0);
+    // Empty and oversized batches are rejected without advancing the cursor.
+    assert_eq!(
+        bridge.try_migrate_escrow(&0),
+        Err(Ok(Error::InvalidPageSize))
+    );
+    assert_eq!(
+        bridge.try_migrate_escrow(&(MAX_ESCROW_MIGRATION_BATCH_SIZE + 1)),
+        Err(Ok(Error::InvalidPageSize))
+    );
     assert_eq!(bridge.get_migration_cursor(), 0);
 
     // exact-fit batches (batch size 1)
@@ -161,22 +170,74 @@ fn test_set_migration_cursor_bounds_and_interaction() {
         Err(Ok(Error::InvalidAmount))
     );
 
-    // valid set
-    assert_eq!(bridge.try_set_migration_cursor(&1), Ok(Ok(())));
-    // the contract stores cursor as a u64, wait let me check how it casts the i128
-    let stored_cursor = bridge.get_migration_cursor();
-    assert_eq!(stored_cursor, 1);
-
-    // interaction with subsequent migrate_escrow call
     let user1 = Address::generate(&env);
     token_admin.mint(&user1, &500);
-    // 3 deposits
     bridge.deposit(&user1, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     bridge.deposit(&user1, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     bridge.deposit(&user1, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
-    // Because cursor is 1, it will skip index 0
-    let migrated = bridge.migrate_escrow(&5);
-    assert_eq!(migrated, 2); // only indices 1 and 2 migrated
+    // A cursor cannot skip records that have not been migrated.
+    assert_eq!(
+        bridge.try_set_migration_cursor(&1),
+        Err(Ok(Error::MigrationInvalidState))
+    );
+    assert_eq!(bridge.get_migration_cursor(), 0);
+
+    assert_eq!(bridge.migrate_escrow(&1), 1);
+    assert_eq!(bridge.get_migration_cursor(), 1);
+    assert_eq!(bridge.try_set_migration_cursor(&1), Ok(Ok(())));
+    assert_eq!(bridge.migrate_escrow(&2), 2);
     assert_eq!(bridge.get_migration_cursor(), 3);
+}
+
+#[test]
+fn malformed_legacy_receipt_does_not_advance_or_replace_old_schema() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (bridge, _admin, token_addr, token_admin) = setup_bridge(&env);
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &100);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    let old_receipt = bridge.get_receipt_by_index(&0).unwrap();
+
+    env.as_contract(&bridge.address, || {
+        env.storage().temporary().remove(&DataKey::ReceiptIndex(0));
+    });
+
+    assert_eq!(
+        bridge.try_migrate_escrow(&1),
+        Err(Ok(Error::MigrationInvalidState))
+    );
+    assert_eq!(bridge.get_migration_cursor(), 0);
+    assert_eq!(bridge.get_escrow_storage_version(), 0);
+    assert_eq!(
+        env.as_contract(&bridge.address, || {
+            env.storage()
+                .persistent()
+                .has(&DataKey::Receipt(old_receipt.id))
+        }),
+        true
+    );
+    assert_eq!(bridge.get_escrow_record(&0), None);
+}
+
+#[test]
+fn future_schema_version_is_rejected_without_overwriting_it() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (bridge, _admin, _token_addr, _token_admin) = setup_bridge(&env);
+    let future_version = ESCROW_STORAGE_VERSION + 1;
+
+    env.as_contract(&bridge.address, || {
+        env.storage()
+            .instance()
+            .set(&DataKey::EscrowStorageVersion, &future_version);
+    });
+
+    assert_eq!(
+        bridge.try_migrate_escrow(&1),
+        Err(Ok(Error::MigrationSchemaMismatch))
+    );
+    assert_eq!(bridge.get_escrow_storage_version(), future_version);
+    assert_eq!(bridge.get_migration_cursor(), 0);
 }

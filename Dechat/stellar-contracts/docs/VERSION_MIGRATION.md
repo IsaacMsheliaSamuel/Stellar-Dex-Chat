@@ -192,7 +192,7 @@ The migration system uses a **cursor-based batch processing** approach to safely
 
 1. **Storage Version Tracking**: A version number stored in instance storage indicates the current schema version
 2. **Migration Cursor**: Tracks progress through the dataset, enabling resumable migrations
-3. **Batch Processing**: Processes records in configurable batch sizes to stay within resource limits
+3. **Batch Processing**: Processes 1–25 records per call to stay within resource limits
 4. **Event Emission**: Publishes progress events for monitoring and indexing
 
 ### Migration Health Check
@@ -222,22 +222,25 @@ Spot-check specific records using `get_escrow_record(id)`.
 ///
 /// # Arguments
 /// * `env` - The contract environment
-/// * `batch_size` - Maximum number of records to migrate in this call
+/// * `batch_size` - Number of records to migrate in this call (1..=25)
 ///
 /// # Returns
 /// * `Ok(u32)` - Number of records migrated in this batch
 /// * `Err(Error)` - Migration error (e.g., already complete, not authorized)
 ///
 /// # Behavior
-/// - Processes records starting from the current cursor position
-/// - Updates cursor after each batch to enable resumption
-/// - Sets storage version to target version when migration completes
-/// - Emits migration event with progress information
+/// - Requires the current schema version to be 0 and the cursor not to exceed
+///   the receipt counter.
+/// - Preflights every record in the bounded batch, including its index, legacy
+///   receipt, token configuration, and accounting invariants before writing.
+/// - Verifies migrated fields and accounting invariants before advancing the
+///   cursor or setting the target schema version.
+/// - Emits migration progress only after all batch checks pass.
 ///
 /// # Example
 /// ```rust
-/// // Migrate 100 records at a time
-/// let migrated = bridge.migrate_escrow(&env, 100)?;
+/// // Migrate up to 25 records at a time
+/// let migrated = bridge.migrate_escrow(&env, 25)?;
 /// println!("Migrated {} records", migrated);
 /// ```
 fn migrate_escrow(env: Env, batch_size: u32) -> Result<u32, Error>
@@ -306,18 +309,34 @@ pub struct MigrationEvent {
 
 | Error | Code | Condition |
 |-------|------|-----------|
-| `MigrationAlreadyComplete` | 608 | Storage version already at target |
-| `NotAuthorized` | 403 | Caller is not admin |
-| `NotInitialized` | 500 | Contract not initialized |
+| `MigrationAlreadyComplete` | 802 | Storage version already at target |
+| `MigrationInvalidState` | 804 | Required legacy data or accounting invariants are invalid |
+| `MigrationSchemaMismatch` | 805 | Stored version is newer than the supported migration |
+| `Unauthorized` | 201 | Caller is not admin |
+| `NotInitialized` | 101 | Contract not initialized |
 
 ### Performance Considerations
 
-- **Batch Size**: Choose based on expected record count and resource limits
-  - Small batches (10-100): Safer for large datasets, more events
-  - Large batches (100-1000): Fewer events, faster completion
+- **Batch Size**: Use a value from 1 through 25. Larger values are rejected.
 - **Gas Costs**: Each record migration consumes gas; monitor during testing
-- **Idempotency**: Safe to call multiple times; will skip already-migrated records
+- **Resumption**: A successful batch advances the cursor atomically. Invalid
+  state leaves the prior schema version and cursor usable.
 - **Monitoring**: Use migration events to track progress in production
+
+## Other Migration Preconditions
+
+`migrate_withdrawal_queue_index(cursor, limit)` requires the supplied cursor to
+match the stored cursor and remain within the request-ID range. Each live
+request must have a positive amount, a supported risk tier, and a registered
+token whose accounting invariants hold before its queue links are rebuilt.
+Invalid state aborts the transaction without committing the page or marking the
+index ready.
+
+`migrate_upgrade_proposal_timing()` verifies that existing timing metadata
+matches its proposal. When creating metadata for a legacy proposal, the delay
+must meet `MIN_UPGRADE_DELAY` and the proposed ledger plus delay must equal the
+proposal's original executable ledger. The migration rereads and verifies the
+stored record before returning success.
 
 ## Batch Fee Withdrawal Nonce (Issue #1113)
 

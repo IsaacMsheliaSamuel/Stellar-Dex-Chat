@@ -351,6 +351,10 @@ pub enum OracleError {
     OracleFutureDated = 3,
     /// The observation's confidence is below the configured threshold.
     OracleLowConfidence = 4,
+    /// The oracle contract could not be invoked or its response could not be decoded.
+    OracleUnavailable = 5,
+    /// The oracle reported a non-positive price.
+    OraclePriceInvalid = 6,
 }
 
 /// Topic used for oracle diagnostic events.
@@ -360,12 +364,15 @@ const ORACLE_DIAG_TOPIC: Symbol = symbol_short!("oracle_diag");
 ///
 /// Classifies, in order:
 /// - a missing observation (`None`) as [`OracleError::OracleMissing`],
+/// - a non-positive price as [`OracleError::OraclePriceInvalid`],
 /// - a future-dated observation (`recorded_at > current_ledger`) as
 ///   [`OracleError::OracleFutureDated`],
 /// - a stale observation (`age > max_age_ledgers`) as
 ///   [`OracleError::OracleStale`],
 /// - a below-confidence observation (`confidence < min_confidence`) as
 ///   [`OracleError::OracleLowConfidence`].
+/// Invocation and response-decoding failures are handled as
+/// [`OracleError::OracleUnavailable`] by the caller.
 ///
 /// On success, emits a diagnostic event carrying only the oracle identity, the
 /// observed ledger, and the current ledger. The untrusted price payload is
@@ -384,6 +391,11 @@ pub fn validate_observation(
             return Err(OracleError::OracleMissing);
         }
     };
+
+    if observation.price <= 0 {
+        emit_diagnostic(env, oracle_id, Some(observation.recorded_at), current_ledger);
+        return Err(OracleError::OraclePriceInvalid);
+    }
 
     // Future-dated observations are rejected before staleness so that clock
     // skew cannot be masked by saturating subtraction.
@@ -421,4 +433,13 @@ fn emit_diagnostic(
         (ORACLE_DIAG_TOPIC, oracle_id.clone()),
         (observed, current_ledger),
     );
+}
+
+/// Record a failed oracle invocation without exposing a price payload.
+pub(crate) fn emit_unavailable_diagnostic(
+    env: &Env,
+    oracle_id: &Address,
+    current_ledger: u32,
+) {
+    emit_diagnostic(env, oracle_id, None, current_ledger);
 }

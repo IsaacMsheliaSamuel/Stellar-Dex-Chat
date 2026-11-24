@@ -48,6 +48,7 @@ Generated from the `Error` enum in `Dechat/stellar-contracts/src/lib.rs`.
 | 502 | `WithdrawalLocked` | Withdrawal Queue | Withdrawal request not yet unlocked |
 | 503 | `OperatorDailyLimitExceeded` | Withdrawal Queue | Operator's daily withdrawal limit exceeded |
 | 504 | `QueueIndexMigrationRequired` | Withdrawal Queue | Existing queue index backfill must complete before queue mutations |
+| 505 | `QueueLimitReached` | Withdrawal Queue | Maximum active withdrawal queue depth reached |
 | 601 | `ActionNotQueued` | Governance & Timelock | Admin action is not queued |
 | 602 | `ActionNotReady` | Governance & Timelock | Admin action timelock has not elapsed |
 | 603 | `InactivityThresholdNotReached` | Governance & Timelock | Inactivity threshold not yet reached |
@@ -71,6 +72,8 @@ Generated from the `Error` enum in `Dechat/stellar-contracts/src/lib.rs`.
 | 801 | `WithdrawalQuotaExceeded` | Quota & Migration | Withdrawal quota exceeded |
 | 802 | `MigrationAlreadyComplete` | Quota & Migration | Data migration already complete |
 | 803 | `BatchOperationFailed` | Quota & Migration | Batch operation failed |
+| 804 | `MigrationInvalidState` | Quota & Migration | Migration preconditions or postconditions failed |
+| 805 | `MigrationSchemaMismatch` | Quota & Migration | Stored schema version is newer than this migration supports |
 | 901 | `InvalidNonce` | Replay Protection | Provided nonce is ahead of current (jump) |
 | 902 | `StaleNonce` | Replay Protection | Provided nonce is behind current (replay) |
 | 1001 | `BelowMinimum` | Deposit Floor | Amount below minimum deposit |
@@ -94,7 +97,7 @@ Generated from the `Error` enum in `Dechat/stellar-contracts/src/lib.rs`.
 | Authorization | 201–207 | Access control and permissions |
 | Constraints | 301–322 | Amount, limit, pagination, and business rule validation |
 | Funds & Balances | 401–402 | Balance checks and fee management |
-| Withdrawal Queue | 501–504 | Withdrawal request processing |
+| Withdrawal Queue | 501–505 | Withdrawal request processing |
 | Governance & Timelock | 601–607 | Admin actions and contract upgrades |
 | External Services | 701–713 | Oracle, pricing, and conversion integration |
 | Quota & Migration | 801–803 | Quota enforcement and data migrations |

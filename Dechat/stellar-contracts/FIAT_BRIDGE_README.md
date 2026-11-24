@@ -61,6 +61,31 @@ cursor. For existing deployments, call
 `None`; each call scans at most 25 request IDs. Queue mutations return
 `QueueIndexMigrationRequired` until this backfill completes.
 
+New requests are bounded by `MAX_WITHDRAWAL_QUEUE_DEPTH` (100) active entries.
+A full queue returns `QueueLimitReached` before request IDs, rate-limit usage,
+or queue indexes are changed.
+
+## Oracle Availability and Token Retirement
+
+`get_oracle_health(token)` provides an O(1) diagnostic view that reports whether
+the configured observation is valid, missing, stale, future-dated, low
+confidence, or unavailable. The view and other non-price-sensitive reads remain
+available when the oracle is unhealthy. Deposits with a fiat cap or an expected
+price, and withdrawals with an expected price, use the timestamped
+`ObservationOracle` interface and fail closed with distinct oracle errors.
+Price-only oracle integrations must implement `get_observation` before being
+used for those operations.
+
+`set_token_deposits_enabled(token, false)` stops new deposits without blocking
+withdrawal requests or settlement for that asset.
+`get_token_retirement_readiness(token)` reports the bounded conditions for
+removal: deposits must be disabled, liabilities and net deposited value must
+both be zero, no fees may remain, escrow migration must be complete when there
+are receipts, the fee remainder must be zero, and the token cannot be the
+default asset. Removed token addresses cannot be registered again.
+`remove_token(token)` enforces those conditions and otherwise returns
+`TokenNotRetirable`.
+
 ## Scoped Emergency Pauses
 
 `set_pause_scope(scope, paused)` independently controls deposits, new withdrawal
@@ -289,6 +314,10 @@ A GitHub Actions step validates that the error table stays in sync with the cont
 | `set_pause_scope(scope, paused)` | admin | Pause one value-moving path |
 | `get_pause_state()` | — | Read global and scoped pause flags |
 | `migrate_withdrawal_queue_index(cursor, limit)` | admin | Backfill the bounded pending queue index |
+| `set_token_deposits_enabled(token, enabled)` | admin | Enable or disable new deposits without blocking settlement |
+| `get_token_retirement_readiness(token)` | — | Read constant-time retirement preconditions |
+| `remove_token(token)` | admin | Remove a fully settled, migrated, non-default token |
+| `get_oracle_health(token)` | — | Read bounded oracle availability and freshness diagnostics |
 | `set_limit(token, limit)` | admin | Update per-token deposit limit |
 | `set_limit_max_cap(max_cap)` | admin | Set the global ceiling for future per-token liability limits |
 | `get_set_limit_max_cap()` | — | Read the current global per-token limit ceiling |
